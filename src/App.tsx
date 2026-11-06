@@ -1,0 +1,729 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { FormEvent, ReactNode } from 'react'
+import {
+  Activity, ArrowRight, AudioLines, Bell, CalendarDays, Check, CheckCircle2,
+  ChevronDown, ChevronRight, ChevronUp, ClipboardList, Clock3, Download, Factory,
+  FileSpreadsheet, Filter, ImagePlus, LayoutDashboard, ListFilter, LockKeyhole,
+  Menu, MoreHorizontal, PackageCheck, Plus, Radio, Search, Settings2,
+  ShieldCheck, ShoppingBag, SlidersHorizontal, TriangleAlert, Users, Wifi, WifiOff, X
+} from 'lucide-react'
+import { moneyless, previewOrders } from './data'
+import { listQueued, saveQueued, setQueuedState, syncQueued } from './offline'
+import { isSupabaseConfigured, supabase } from './supabase'
+import type { Order, PendingUpdate, Role } from './types'
+import { loadOrders, loadProfile } from './liveData'
+import type { User } from '@supabase/supabase-js'
+import { invokeProtectedFunction } from './supabase'
+
+type Page = 'board' | 'orders' | 'issues' | 'photos' | 'reports' | 'production' | 'sync' | 'buyer' | 'workspace'
+const roleLabels: Record<Role, string> = { merchandiser: 'Merchandiser', supervisor: 'Factory supervisor', buyer: 'Buyer', admin: 'Administrator' }
+
+function App() {
+  const [authMode, setAuthMode] = useState<'preview' | 'checking' | 'signedOut' | 'loadingWorkspace' | 'signedIn'>(isSupabaseConfigured ? 'checking' : 'preview')
+  const [sessionUser, setSessionUser] = useState<User | null>(null)
+  const [profileName, setProfileName] = useState('')
+  const [buyerAccount, setBuyerAccount] = useState('Northstar Kids')
+  const [workspaceError, setWorkspaceError] = useState('')
+  const [authBusy, setAuthBusy] = useState(false)
+  const [authError, setAuthError] = useState('')
+  const [role, setRole] = useState<Role>('merchandiser')
+  const [page, setPage] = useState<Page>('board')
+  const [orders, setOrders] = useState<Order[]>(previewOrders)
+  const [updates, setUpdates] = useState<PendingUpdate[]>([])
+  const [online, setOnline] = useState(navigator.onLine)
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [buyerFilter, setBuyerFilter] = useState('All buyers')
+  const [unitFilter, setUnitFilter] = useState('All units')
+  const [shipWeekFilter,setShipWeekFilter]=useState('All ship weeks')
+  const [search, setSearch] = useState('')
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
+  const [modal, setModal] = useState<'order' | 'update' | 'plan' | null>(null)
+  const [toast, setToast] = useState('')
+  const [menuOpen, setMenuOpen] = useState(false)
+
+  useEffect(() => {
+    if (!supabase) { setAuthMode('preview'); return }
+    let active = true
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!active) return
+      setSessionUser(session?.user ?? null)
+      setAuthMode(session ? 'loadingWorkspace' : 'signedOut')
+    })
+    void supabase.auth.getSession().then(({ data }) => {
+      if (!active) return
+      setSessionUser(data.session?.user ?? null)
+      setAuthMode(data.session ? 'loadingWorkspace' : 'signedOut')
+    }).catch(() => { if (active) setAuthMode('signedOut') })
+    return () => { active = false; subscription.unsubscribe() }
+  }, [])
+
+  useEffect(() => {
+    if (!supabase || !sessionUser) return
+    let active = true
+    setAuthMode('loadingWorkspace'); setWorkspaceError('')
+    void (async () => {
+      try {
+        const profile = await loadProfile(sessionUser)
+        const liveOrders = await loadOrders(profile.role)
+        if (!active) return
+        setProfileName(profile.displayName); setBuyerAccount(profile.buyerName || 'Northstar Kids'); setRole(profile.role); setOrders(liveOrders)
+        setPage(profile.role === 'buyer' ? 'buyer' : profile.role === 'supervisor' ? 'production' : profile.role === 'admin' ? 'workspace' : 'board')
+        setAuthMode('signedIn')
+      } catch (error) {
+        if (!active) return
+        setWorkspaceError(error instanceof Error ? error.message : 'Could not load the workspace.')
+        setAuthMode('signedIn')
+      }
+    })()
+    return () => { active = false }
+  }, [sessionUser])
+
+  useEffect(() => {
+    const onOnline = () => setOnline(true)
+    const onOffline = () => setOnline(false)
+    window.addEventListener('online', onOnline)
+    window.addEventListener('offline', onOffline)
+    void refreshQueue()
+    return () => { window.removeEventListener('online', onOnline); window.removeEventListener('offline', onOffline) }
+  }, [])
+
+  useEffect(() => {
+    if (!supabase || authMode !== 'signedIn' || !online) return
+    void listQueued().then(async queue => {
+      for (const item of queue.filter(item => !item.update.previewOnly)) {
+        try { await setQueuedState(item.update.clientId,'syncing'); await syncQueued(item) } catch { await setQueuedState(item.update.clientId,'sync failed').catch(()=>undefined) }
+      }
+      await refreshQueue()
+    }).catch(() => undefined)
+  }, [online, authMode])
+
+  useEffect(() => {
+    if (!toast) return
+    const timer = window.setTimeout(() => setToast(''), 3200)
+    return () => window.clearTimeout(timer)
+  }, [toast])
+
+  async function refreshQueue() {
+    try {
+      const queue = await listQueued()
+      setUpdates(queue.map(record => record.update))
+    } catch { /* IndexedDB may be unavailable in a restricted browser. */ }
+  }
+
+  const filteredOrders = useMemo(() => orders.filter(order => {
+    const matchesBuyer = buyerFilter === 'All buyers' || order.buyer === buyerFilter
+    const matchesUnit = unitFilter === 'All units' || order.unit.includes(unitFilter)
+    const matchesWeek = shipWeekFilter === 'All ship weeks' || weekStartFor(order.shipDate) === shipWeekFilter
+    const matchesSearch = !search || `${order.po} ${order.buyer} ${order.style} ${order.colour}`.toLowerCase().includes(search.toLowerCase())
+    const buyerScoped = authMode !== 'preview' || role !== 'buyer' || order.buyer === 'Northstar Kids'
+    return matchesBuyer && matchesUnit && matchesWeek && matchesSearch && buyerScoped
+  }), [orders, buyerFilter, unitFilter, shipWeekFilter, search, role, authMode])
+
+  const activeOrders=orders.filter(o=>o.state!=='draft'&&o.state!=='cancelled')
+  const redCount = activeOrders.filter(o => o.status === 'red').length
+  const amberCount = activeOrders.filter(o => o.status === 'amber').length
+  const pendingCount = updates.length
+
+  async function signIn(email: string, password: string) {
+    if (!supabase) return
+    setAuthBusy(true); setAuthError('')
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error) setAuthError('Sign-in failed. Check your details or contact your workspace administrator.')
+    setAuthBusy(false)
+  }
+  async function signOut() { await supabase?.auth.signOut(); setOrders([]); setSessionUser(null) }
+
+  if (authMode === 'checking' || authMode === 'loadingWorkspace') return <div className="auth-loading"><div className="brand-mark"><span /></div><b>{authMode === 'checking' ? 'Connecting to Threadline' : 'Loading your workspace'}</b><span>Please wait a moment.</span></div>
+  if (authMode === 'signedOut') return <SignInScreen onSignIn={signIn} busy={authBusy} error={authError} />
+  if (workspaceError) return <WorkspaceError message={workspaceError} onSignOut={signOut} />
+
+  function navigate(next: Page) { setPage(next); setSelectedOrder(null); setMenuOpen(false) }
+  function notify(message: string) { setToast(message) }
+
+  return <div className="app-shell">
+    <aside className={`sidebar ${menuOpen ? 'sidebar-open' : ''}`}>
+      <div className="brand"><div className="brand-mark"><span /></div><span>threadline</span><button className="icon-button mobile-close" aria-label="Close menu" onClick={() => setMenuOpen(false)}><X size={18} /></button></div>
+      <div className="workspace-switch"><div className="workspace-avatar">TL</div><div className="workspace-label"><b>Threadline workspace</b><span>Production operations</span></div><ChevronDown size={15} /></div>
+      <div className="nav-caption">WORKSPACE</div>
+      <nav className="primary-nav">
+        {role === 'merchandiser' && <>
+          <NavItem icon={<LayoutDashboard size={18} />} label="Order board" active={page === 'board'} onClick={() => navigate('board')} />
+          <NavItem icon={<ClipboardList size={18} />} label="Orders" active={page === 'orders'} onClick={() => navigate('orders')} />
+          <NavItem icon={<Activity size={18} />} label="Issue review" active={page === 'issues'} badge={orders.filter(o => o.issue).length} onClick={() => navigate('issues')} />
+          <NavItem icon={<ImagePlus size={18} />} label="Photo approvals" active={page === 'photos'} onClick={() => navigate('photos')} />
+          <NavItem icon={<FileSpreadsheet size={18} />} label="Buyer reports" active={page === 'reports'} onClick={() => navigate('reports')} />
+        </>}
+        {role === 'supervisor' && <>
+          <NavItem icon={<Factory size={18} />} label="My production" active={page === 'production'} onClick={() => navigate('production')} />
+          <NavItem icon={<Radio size={18} />} label="Pending sync" active={page === 'sync'} badge={pendingCount || undefined} onClick={() => navigate('sync')} />
+          <NavItem icon={<Activity size={18} />} label="My issues" active={page === 'issues'} onClick={() => navigate('issues')} />
+        </>}
+        {role === 'buyer' && <NavItem icon={<ShoppingBag size={18} />} label="My orders" active={page === 'buyer'} onClick={() => navigate('buyer')} />}
+        {role === 'admin' && <NavItem icon={<Settings2 size={18} />} label="Workspace setup" active={page === 'workspace'} onClick={() => navigate('workspace')} />}
+      </nav>
+      <div className="sidebar-spacer" />
+      {role !== 'buyer' && <div className="sidebar-health"><div className="health-icon"><ShieldCheck size={16} /></div><div><b>{authMode==='preview'?'Preview mode':'Workspace'}</b><span>{authMode==='preview'?'Sample records only':online?'Connected':'Offline · local queue'}</span></div><span className="health-dot" /></div>}
+      <div className="profile-row"><div className="profile-avatar">{(profileName||buyerAccount||roleLabels[role]).slice(0,2).toUpperCase()}</div><div className="profile-meta"><b>{authMode==='preview'?`Preview ${roleLabels[role]}`:profileName||buyerAccount}</b><span>{roleLabels[role]}</span></div><button className="icon-button" aria-label="Account menu" onClick={() => notify(authMode==='preview'?'Sign in to manage your account.':'Account settings are managed by your workspace administrator.')}><MoreHorizontal size={18} /></button></div>
+    </aside>
+
+    <main className="main-area">
+      <header className="topbar">
+        <button className="icon-button mobile-menu" aria-label="Open menu" onClick={() => setMenuOpen(true)}><Menu size={20} /></button>
+        <div className="breadcrumb">Workspace <ChevronRight size={14} /> <b>{pageTitle(page, role)}</b></div>
+        <div className="topbar-actions">
+          <span className={`connection-pill ${online ? 'is-online' : 'is-offline'}`}><span />{online ? 'Online' : 'Offline'}{pendingCount > 0 && <b>{pendingCount} pending</b>}</span>
+          <button className="icon-button notification-button" aria-label="Notifications" onClick={() => notify('You’re all caught up.')}><Bell size={18} /><i /></button>
+          {authMode === 'preview' ? <div className="role-select-wrap"><span className="role-caption">Preview role</span><select aria-label="Preview role" value={role} onChange={e => { setRole(e.target.value as Role); setPage(e.target.value === 'buyer' ? 'buyer' : e.target.value === 'supervisor' ? 'production' : e.target.value === 'admin' ? 'workspace' : 'board') }}><option value="merchandiser">Merchandiser</option><option value="supervisor">Supervisor</option><option value="buyer">Buyer</option><option value="admin">Admin</option></select><ChevronDown size={13} /></div> : <div className="role-select-wrap signed-role"><span className="role-caption">{profileName || sessionUser?.email}</span><b>{roleLabels[role]}</b><button className="signout-button" onClick={() => void signOut()}>Sign out</button></div>}
+        </div>
+      </header>
+
+      <div className="content-wrap">
+        {authMode === 'preview' && <div className="preview-banner"><span className="preview-dot" /><div><b>Preview workspace</b><span>Showing synthetic sample orders. Configure Supabase and sign in for live workspace data.</span></div><button onClick={() => notify('Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env.local, then apply the database migration.')}>Connect data <ArrowRight size={14} /></button></div>}
+        {page === 'board' && <BoardPage orders={filteredOrders.filter(order => order.state !== 'draft' && order.state !== 'cancelled')} allOrders={activeOrders} preview={authMode==='preview'} buyerFilter={buyerFilter} unitFilter={unitFilter} shipWeekFilter={shipWeekFilter} search={search} filtersOpen={filtersOpen} setBuyerFilter={setBuyerFilter} setUnitFilter={setUnitFilter} setShipWeekFilter={setShipWeekFilter} setSearch={setSearch} setFiltersOpen={setFiltersOpen} setSelected={setSelectedOrder} setModal={setModal} redCount={redCount} amberCount={amberCount} />}
+        {page === 'orders' && <OrdersPage orders={filteredOrders} setSelected={setSelectedOrder} setModal={setModal} />}
+        {page === 'production' && <ProductionPage orders={filteredOrders} supervisorName={profileName} setModal={setModal} />}
+        {page === 'sync' && <SyncPage updates={updates} online={online} onRetry={async () => { const q = await listQueued(); for (const item of q.filter(item => !item.update.previewOnly)) { try { await setQueuedState(item.update.clientId,'syncing'); await syncQueued(item) } catch { await setQueuedState(item.update.clientId,'sync failed').catch(()=>undefined) } } await refreshQueue(); notify('Sync queue checked. Any failed items remain saved on this device.') }} />}
+        {page === 'issues' && <IssuesPage orders={filteredOrders} notify={notify} />}
+        {page === 'photos' && <PhotoApprovalsPage live={authMode==='signedIn'} notify={notify} />}
+        {page === 'reports' && <ReportsPage orders={filteredOrders} notify={notify} />}
+      {page === 'buyer' && <BuyerPage buyerName={buyerAccount} orders={filteredOrders} setSelected={setSelectedOrder} />}
+        {page === 'workspace' && <WorkspacePage live={authMode==='signedIn'} notify={notify} />}
+      </div>
+    </main>
+
+    {selectedOrder && (role === 'buyer' ? <BuyerOrderDrawer order={selectedOrder} onClose={() => setSelectedOrder(null)} /> : <OrderDrawer order={selectedOrder} live={authMode === 'signedIn'} preview={authMode==='preview'} onPlan={() => setModal('plan')} onClose={() => setSelectedOrder(null)} />)}
+    {modal === 'order' && <OrderModal live={authMode === 'signedIn'} onClose={() => setModal(null)} onSave={async submission => {
+      if (authMode === 'signedIn' && supabase) {
+        if (!submission.buyerId || !submission.unitId) throw new Error('Select a buyer and production unit from the connected workspace.')
+        const { error } = await supabase.rpc('create_order_draft', {
+          buyer_id_input: submission.buyerId, unit_id_input: submission.unitId, po_number_input: submission.order.po,
+          style_input: submission.order.style, colour_input: submission.order.colour, ex_factory_date_input: submission.order.shipDate,
+          stated_total_input: submission.statedTotal, sizes_input: submission.sizes, mismatch_acknowledged_input: submission.mismatchAcknowledged
+        })
+        if (error) throw new Error(error.message.includes('purchase_orders_buyer_id_po_number_key') ? 'This buyer already has that PO number.' : error.message)
+        const refreshed = await loadOrders(role)
+        setOrders(refreshed); setModal(null); notify('Draft order saved to the workspace.')
+      } else { setOrders(current => [{ ...submission.order, state: 'draft' }, ...current]); setModal(null); notify('Draft order saved in this preview session.') }
+    }} />}
+    {modal === 'update' && <UpdateModal previewOnly={authMode === 'preview'} orders={orders} onClose={() => setModal(null)} onSave={async (record, photo, audio) => {
+      await saveQueued({ update: record, photo, audio })
+      setUpdates(current => [record, ...current])
+      setModal(null)
+      if (online && isSupabaseConfigured) {
+        try { await setQueuedState(record.clientId,'syncing'); await syncQueued({ update: record, photo, audio }); setUpdates(current => current.filter(item => item.clientId !== record.clientId)); notify('Production update synced successfully.') }
+        catch { await setQueuedState(record.clientId,'sync failed').catch(()=>undefined); await refreshQueue(); notify('Update saved on this device. Sync failed and can be retried.') }
+      } else notify('Update saved on this device and waiting to sync.')
+    }} />}
+    {modal === 'plan' && selectedOrder && <PlanModal order={selectedOrder} live={authMode === 'signedIn'} onClose={() => setModal(null)} onSaved={async () => {
+      if (authMode === 'signedIn') setOrders(await loadOrders(role))
+      setModal(null); setSelectedOrder(null); notify('Production plan saved.')
+    }} />}
+    {toast && <div className="toast"><CheckCircle2 size={17} />{toast}<button className="icon-button" onClick={() => setToast('')} aria-label="Dismiss"><X size={15} /></button></div>}
+  </div>
+}
+
+function NavItem({ icon, label, active, badge, onClick }: { icon: ReactNode; label: string; active?: boolean; badge?: number; onClick: () => void }) {
+  return <button className={`nav-item ${active ? 'active' : ''}`} onClick={onClick}>{icon}<span>{label}</span>{badge !== undefined && <b className="nav-badge">{badge}</b>}</button>
+}
+
+function SignInScreen({ onSignIn, busy, error }: { onSignIn: (email: string, password: string) => void; busy: boolean; error: string }) {
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  return <div className="auth-page"><div className="auth-brand"><div className="brand-mark"><span /></div><span>threadline</span></div><form className="auth-card" onSubmit={e => { e.preventDefault(); onSignIn(email, password) }}><span className="eyebrow">PRODUCTION WORKSPACE</span><h1>Welcome back</h1><p>Sign in with the account provided by your workspace administrator.</p><label className="form-label">Email address<input type="email" autoComplete="username" required value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.com" /></label><label className="form-label">Password<input type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="Your password" /></label>{error && <div className="form-error"><LockKeyhole size={15} />{error}</div>}<button className="button button-primary auth-submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'} <ArrowRight size={15} /></button><div className="auth-help"><LockKeyhole size={14} /> Access is managed by your Threadline administrator.</div></form><span className="auth-footer">Threadline · Production order tracking</span></div>
+}
+
+function WorkspaceError({ message, onSignOut }: { message: string; onSignOut: () => void }) {
+  return <div className="auth-page"><div className="auth-brand"><div className="brand-mark"><span /></div><span>threadline</span></div><div className="auth-card auth-error-card"><span className="error-mark"><TriangleAlert size={18} /></span><h1>Workspace unavailable</h1><p>{message}</p><button className="button button-secondary" onClick={onSignOut}>Sign out</button></div><span className="auth-footer">Contact your workspace administrator for help.</span></div>
+}
+
+function pageTitle(page: Page, role: Role) {
+  if (page === 'board') return 'Order board'
+  if (page === 'orders') return 'Orders'
+  if (page === 'production') return 'My production'
+  if (page === 'sync') return 'Pending sync'
+  if (page === 'issues') return role === 'supervisor' ? 'My issues' : 'Issue review'
+  if (page === 'photos') return 'Photo approvals'
+  if (page === 'reports') return 'Buyer reports'
+  if (page === 'buyer') return 'My orders'
+  return 'Workspace setup'
+}
+
+function BoardPage(props: {
+  orders: Order[]; allOrders:Order[]; preview:boolean; buyerFilter: string; unitFilter: string; shipWeekFilter:string; search: string; filtersOpen: boolean
+  setBuyerFilter: (s: string) => void; setUnitFilter: (s: string) => void; setShipWeekFilter:(s:string)=>void; setSearch: (s: string) => void
+  setFiltersOpen: (v: boolean) => void; setSelected: (o: Order) => void; setModal: (m: 'order' | 'update' | null) => void
+  redCount: number; amberCount: number
+}) {
+  const atRisk = props.orders.filter(o => o.status === 'red' || o.status === 'amber').length
+  const totalUnits = props.orders.reduce((sum, o) => sum + o.quantity, 0)
+  const completed = props.orders.reduce((sum, o) => sum + o.completed, 0)
+  const insufficient=props.orders.filter(o=>o.status==='insufficient').length
+  const buyers=[...new Set(props.allOrders.map(o=>o.buyer))]
+  const units=[...new Set(props.allOrders.map(o=>o.unit))]
+  const weeks=[...new Set(props.allOrders.map(o=>weekStartFor(o.shipDate)))].sort()
+  return <>
+    <div className="page-heading"><div><div className="eyebrow">{new Intl.DateTimeFormat('en-IN',{weekday:'long',month:'long',day:'numeric',year:'numeric'}).format(new Date()).toUpperCase()} <span className="eyebrow-line" /></div><h1>Production overview</h1><p>Here’s how your orders are moving across the floor.</p></div><div className="heading-actions"><button className="button button-secondary" onClick={() => props.setFiltersOpen(!props.filtersOpen)}><SlidersHorizontal size={16} /> Filters</button><button className="button button-primary" onClick={() => props.setModal('order')}><Plus size={17} /> New order</button></div></div>
+    <div className="metric-grid">
+      <Metric label="Active orders" value={String(props.orders.length).padStart(2, '0')} foot={<><span className="metric-neutral">Across {units.length} production units</span></>} icon={<ClipboardList size={17} />} />
+      <Metric label="Order quantity" value={moneyless(totalUnits)} foot={<><span className="metric-neutral">Pieces in active production</span></>} icon={<PackageCheck size={17} />} />
+      <Metric label="Completed" value={`${totalUnits ? Math.round(completed / totalUnits * 100) : 0}%`} foot={<><span className="metric-neutral">{moneyless(completed)} pieces reported</span></>} icon={<Check size={17} />} />
+      <Metric label="Needs attention" value={String(atRisk).padStart(2, '0')} foot={<><span className="metric-alert"><span /> {props.redCount} at risk</span><span className="metric-neutral"> · {props.amberCount} watch · {insufficient} insufficient data</span></>} icon={<TriangleAlert size={17} />} alert />
+    </div>
+    <div className="section-heading"><div><h2>Active production</h2><span className="section-subtitle">Live view of order progress and production risk</span></div><div className="section-tools"><div className="search-field"><Search size={16} /><input value={props.search} onChange={e => props.setSearch(e.target.value)} placeholder="Search PO, style, buyer" /></div><button className="button button-quiet" onClick={() => props.setFiltersOpen(!props.filtersOpen)}><Filter size={15} /> Filter</button><button className="button button-quiet icon-only" aria-label="More options"><MoreHorizontal size={18} /></button></div></div>
+    {props.filtersOpen && <div className="filter-bar"><span><ListFilter size={15} /> Showing</span><select value={props.buyerFilter} onChange={e => props.setBuyerFilter(e.target.value)}><option>All buyers</option>{buyers.map(b=><option key={b}>{b}</option>)}</select><select value={props.unitFilter} onChange={e => props.setUnitFilter(e.target.value)}><option>All units</option>{units.map(u=><option key={u} value={u}>{u}</option>)}</select><select value={props.shipWeekFilter} onChange={e=>props.setShipWeekFilter(e.target.value)}><option>All ship weeks</option>{weeks.map(week=><option key={week} value={week}>Week of {new Date(`${week}T00:00:00`).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'})}</option>)}</select><button onClick={() => { props.setBuyerFilter('All buyers'); props.setUnitFilter('All units'); props.setShipWeekFilter('All ship weeks'); props.setSearch('') }}>Clear filters</button></div>}
+    <div className="table-card"><div className="table-scroll"><table><thead><tr><th>ORDER</th><th>BUYER / UNIT</th><th>PRODUCTION</th><th>PROGRESS</th><th>EX-FACTORY</th><th>LAST UPDATE</th><th>STATUS</th><th /></tr></thead><tbody>
+      {props.orders.map(order => <OrderRow key={order.id} order={order} onClick={() => props.setSelected(order)} />)}
+      {props.orders.length === 0 && <tr><td colSpan={8} className="empty-cell">No orders match these filters. Try clearing the search or filters.</td></tr>}
+    </tbody></table></div><div className="table-footer"><span>Showing <b>{props.orders.length}</b> of <b>{props.orders.length}</b> active orders</span><button className="button button-quiet" onClick={() => props.setModal('order')}>View all orders <ArrowRight size={15} /></button></div></div>
+    <div className="bottom-grid"><div className="panel-card"><div className="panel-heading"><div><h3>Production risk summary</h3><span>{props.preview?'Illustrative sample classifications':'Based on approved unit settings and available updates'}</span></div></div><div className="risk-summary-list"><div><span><i className="risk-summary-dot dot-red"/>At risk</span><b>{props.orders.filter(o=>o.status==='red').length}</b></div><div><span><i className="risk-summary-dot dot-amber"/>Watch</span><b>{props.orders.filter(o=>o.status==='amber').length}</b></div><div><span><i className="risk-summary-dot dot-green"/>On track</span><b>{props.orders.filter(o=>o.status==='green').length}</b></div><div><span><i className="risk-summary-dot dot-muted"/>Insufficient data</span><b>{insufficient}</b></div></div><div className="chart-foot"><span>Missing updates and unapproved risk settings remain visible as insufficient data.</span></div></div>
+      <div className="panel-card attention-card"><div className="panel-heading"><div><h3>Needs your attention</h3><span>Orders with production risk</span></div></div><div className="attention-list">{props.orders.filter(o=>o.status==='red'||o.status==='amber').slice(0,3).map(o=><button className="attention-item" key={o.id} onClick={()=>props.setSelected(o)}><span className={`attention-icon ${o.status}`}><TriangleAlert size={16}/></span><span className="attention-copy"><b>{o.po} · {o.style}</b><small>{o.issue||'Review the required daily output against recent production.'}</small></span><ChevronRight size={16}/></button>)}{!atRisk&&insufficient>0&&<div className="all-clear"><TriangleAlert size={17}/>Risk cannot be calculated reliably for {insufficient} order{insufficient===1?'':'s'} with current data.</div>}{!atRisk&&!insufficient&&<div className="all-clear"><CheckCircle2 size={17}/>No active orders need attention.</div>}</div></div></div>
+  </>
+}
+
+function Metric({ label, value, foot, icon, alert }: { label: string; value: string; foot: ReactNode; icon: ReactNode; alert?: boolean }) {
+  return <div className="metric-card"><div className="metric-top"><span>{label}</span><span className={`metric-icon ${alert ? 'metric-icon-alert' : ''}`}>{icon}</span></div><strong>{value}</strong><div className="metric-foot">{foot}</div></div>
+}
+
+function OrderRow({ order, onClick }: { order: Order; onClick: () => void }) {
+  const pct = Math.min(100, Math.round(order.completed / order.quantity * 100))
+  const risk = order.status
+  return <tr className="order-row" onClick={onClick} tabIndex={0} onKeyDown={e => { if (e.key === 'Enter') onClick() }}>
+    <td><div className="po-cell"><b>{order.po}</b><span>{order.style}</span></div></td>
+    <td><div className="buyer-cell"><b>{order.buyer}</b><span>{order.unit}</span></div></td>
+    <td><div className="stage-cell"><span className="stage-dot" />{order.stage}{order.blocked&&<em className="blocked-badge">Blocked</em>}<small>{order.colour}</small></div></td>
+    <td><div className="progress-cell"><div><b>{pct}%</b><span>{moneyless(order.completed)} / {moneyless(order.quantity)}</span></div><div className="progress-track"><i style={{ width: `${pct}%` }} /></div></div></td>
+    <td><div className="date-cell"><CalendarDays size={14} />{new Date(`${order.shipDate}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}<small>{daysLabel(order.shipDate)}</small></div></td>
+    <td><div className="updated-cell"><span className={`freshness-dot ${order.freshness.toLowerCase().replace(' ', '-')}`} />{order.updatedAt}<small>{order.freshness === 'No update' ? 'Missing daily update' : order.freshness === 'Stale' ? 'Update is getting stale' : 'Production update'}</small></div></td>
+    <td><RiskBadge risk={risk} /></td><td><button className="row-more" aria-label={`Open ${order.po}`}><ChevronRight size={17} /></button></td>
+  </tr>
+}
+
+function RiskBadge({ risk }: { risk: Order['status'] }) {
+  const labels = { green: 'On track', amber: 'Watch', red: 'At risk', insufficient: 'Insufficient data' }
+  return <span className={`risk-badge risk-${risk}`}><i />{labels[risk]}</span>
+}
+function BuyerStatusBadge({state,hasProgress}:{state:Order['state'];hasProgress:boolean}){const label=state==='complete'?'Completed':hasProgress?'In production':'Production scheduled';return <span className={`buyer-status-pill buyer-status-${state==='complete'?'complete':'active'}`}><i/>{label}</span>}
+
+function weekStartFor(date:string){const d=new Date(`${date}T00:00:00`);d.setDate(d.getDate()-((d.getDay()+6)%7));return localInputDate(d)}
+function daysLabel(date: string) {
+  const today=new Date();today.setHours(0,0,0,0)
+  const days = Math.ceil((new Date(`${date}T00:00:00`).getTime() - today.getTime()) / 86400000)
+  return days < 0 ? `${Math.abs(days)} days past` : `in ${days} days`
+}
+
+function OrdersPage({ orders, setSelected, setModal }: { orders: Order[]; setSelected: (o: Order) => void; setModal: (m: 'order' | 'update' | null) => void }) {
+  return <><div className="page-heading"><div><div className="eyebrow">ORDER MANAGEMENT</div><h1>Orders</h1><p>Keep each purchase order, plan and production route in one place.</p></div><button className="button button-primary" onClick={() => setModal('order')}><Plus size={17} /> New order</button></div><div className="toolbar-card"><div className="search-field"><Search size={16} /><input placeholder="Search purchase orders" /></div><button className="button button-secondary"><Filter size={15} /> Filters</button><div className="toolbar-spacer" /><span className="quiet-label">{orders.length} active orders</span></div><div className="order-list-grid">{orders.map(o => <button key={o.id} className="order-list-card" onClick={() => setSelected(o)}><div className="list-card-top"><span className="order-code">{o.po}</span><RiskBadge risk={o.status} /></div><h3>{o.style}</h3><p>{o.buyer} <span>·</span> {o.colour}</p><div className="list-card-progress"><div className="progress-track"><i style={{ width: `${Math.round(o.completed / o.quantity * 100)}%` }} /></div><b>{Math.round(o.completed / o.quantity * 100)}%</b></div><div className="list-card-foot"><span><Factory size={14} />{o.unit}</span><span><CalendarDays size={14} />{new Date(`${o.shipDate}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</span></div></button>)}</div></>
+}
+
+function ProductionPage({orders,supervisorName,setModal}:{orders:Order[];supervisorName:string;setModal:(m:'order'|'update'|null)=>void}) {
+  const unit=orders[0]?.unit??'No assigned production unit'
+  const today=new Intl.DateTimeFormat('en-IN',{weekday:'short',day:'numeric',month:'short'}).format(new Date())
+  return <><div className="page-heading supervisor-heading"><div><div className="eyebrow">{unit.toUpperCase()}</div><h1>{supervisorName?`Good morning, ${supervisorName}`:'My production'}</h1><p>Production orders assigned to your account.</p></div><button className="button button-primary" onClick={()=>setModal('update')} disabled={!orders.length}><Plus size={17}/> Add update</button></div><div className="supervisor-note"><div className="note-icon"><Wifi size={17}/></div><div><b>Updates save on this device first</b><span>When offline, saved work stays queued here and syncs when connectivity returns.</span></div><ChevronRight size={17}/></div><div className="section-heading supervisor-section"><div><h2>Assigned production</h2><span className="section-subtitle">Tap Add update to record this reporting period’s output</span></div><span className="today-date"><CalendarDays size={15}/> Today · {today}</span></div><div className="work-cards">{orders.slice(0,8).map(o=>{const stage=o.stageOptions?.find(s=>s.name===o.stage)??o.stageOptions?.[0];return <div className="work-card" key={o.id}><div className="work-card-main"><div className="work-order-top"><span className="order-code">{o.po}</span><span className="work-stage-chip"><span className="stage-dot"/>{stage?.name??'Production planning'}</span></div><h3>{o.style}</h3><p>{o.buyer} <span>·</span> {o.colour}</p><div className="work-progress"><div className="progress-track"><i style={{width:`${o.quantity?Math.round(o.completed/o.quantity*100):0}%`}}/></div><span>{moneyless(o.completed)} of {moneyless(o.quantity)} pieces reported</span></div><div className="assigned-lines"><span>Assigned lines</span><b>{stage?.lines.length?stage.lines.map(line=>line.name).join(' · '):'Stage-level reporting'}</b></div></div><button className="button button-secondary work-update" onClick={()=>setModal('update')}><Plus size={15}/> Add update</button></div>})}{!orders.length&&<div className="empty-state"><Factory size={20}/><b>No orders are assigned to your account</b><span>Ask your merchandiser to add you to an order stage.</span></div>}</div></>
+}
+function SyncPage({ updates, online, onRetry }: { updates: PendingUpdate[]; online: boolean; onRetry: () => void }) {
+  return <><div className="page-heading"><div><div className="eyebrow">DEVICE QUEUE</div><h1>Pending sync</h1><p>Updates waiting to reach the production workspace.</p></div><button className="button button-secondary" disabled={!online || updates.every(update => update.previewOnly)} onClick={onRetry}><Radio size={16} /> Sync now</button></div><div className={`sync-status-card ${online ? '' : 'sync-offline'}`}><div className="sync-status-icon">{online ? <Wifi size={19} /> : <WifiOff size={19} />}</div><div><b>{online ? 'This device is online' : 'You’re offline right now'}</b><span>{online ? 'Queued updates will sync when the workspace is connected.' : 'Your saved work stays on this device. Reconnect to sync it.'}</span></div><span className="sync-counter">{updates.length} pending</span></div><div className="table-card sync-table"><div className="table-scroll"><table><thead><tr><th>ORDER / STAGE</th><th>REPORTING DATE</th><th>QUANTITY</th><th>SAVED</th><th>SYNC STATUS</th></tr></thead><tbody>{updates.map(u => <tr key={u.clientId}><td><div className="po-cell"><b>{u.orderId}</b><span>{u.stage} · {u.line}{u.previewOnly ? ' · preview only' : ''}</span></div></td><td>{new Date(`${u.reportingDate}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</td><td><b>{moneyless(u.quantity)} pcs</b></td><td>{new Date(u.createdAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</td><td><span className="sync-state"><span />{u.previewOnly ? 'preview only' : u.syncState}</span></td></tr>)}{updates.length === 0 && <tr><td className="empty-cell" colSpan={5}>No pending updates. New records will appear here until they sync.</td></tr>}</tbody></table></div></div><div className="storage-note"><LockKeyhole size={15} /> Pending entries are stored in this browser on this device. Clearing browser data may remove unsynced work.</div></>
+}
+
+function IssuesPage({ orders, notify }: { orders: Order[]; notify: (s: string) => void }) {
+  const issues = orders.filter(o => o.issue || o.latestAudioPath)
+  const [reviewing, setReviewing] = useState<Order | null>(null)
+  return <><div className="page-heading"><div><div className="eyebrow">PRODUCTION FOLLOW-UP</div><h1>Issue review</h1><p>Review original notes and keep translation decisions traceable.</p></div><button className="button button-secondary" onClick={() => notify('Issue list is scoped to the orders available to your account.') }><Filter size={15} /> Filters</button></div><div className="issue-stack">{issues.map((o, i) => <div className="issue-card" key={o.id}><div className={`issue-severity ${i === 0 ? 'high' : 'medium'}`}><TriangleAlert size={17} /></div><div className="issue-content"><div className="issue-meta"><b>{o.po} · {o.stage}</b><span>{o.updatedAt}</span></div><h3>{o.issue || 'Voice note received — transcription pending'}</h3><p>{o.buyer} · {o.style} · {o.unit}</p><div className="issue-actions"><span className="issue-category"><Activity size={13} /> {o.latestAudioPath ? 'Original audio retained' : 'Text issue note'}</span><button className="text-button" onClick={() => setReviewing(o)}><AudioLines size={15} /> Review note</button><button className="text-button" onClick={() => notify('Recovery action entry is available after the order plan is connected.')}>Add recovery action</button></div></div><button className="icon-button" aria-label="More issue actions"><MoreHorizontal size={17} /></button></div>)}{issues.length === 0 && <div className="empty-card"><CheckCircle2 size={20} /><b>No open issues</b><span>Newly reported text and voice notes will appear here.</span></div>}</div>{reviewing&&<IssueReviewModal order={reviewing} onClose={()=>setReviewing(null)} notify={notify}/>}</>
+}
+
+type PhotoReviewRow={id:string;storage_path:string;approved_for_buyer:boolean;reporting_date:string;po:string;style:string;buyer:string;url:string}
+function PhotoApprovalsPage({live,notify}:{live:boolean;notify:(message:string)=>void}){
+  const [rows,setRows]=useState<PhotoReviewRow[]>([]);const [loading,setLoading]=useState(true);const [busy,setBusy]=useState('')
+  async function reload(){if(!supabase||!live){setLoading(false);return}setLoading(true);try{const {data,error}=await supabase.from('photo_approvals').select('id,storage_path,approved_for_buyer,production_updates!inner(reporting_date,order_id,purchase_orders!inner(po_number,style,buyer_visible,buyers(name)))').order('created_at',{ascending:false});if(error)throw error;const results:PhotoReviewRow[]=[];for(const item of (data??[]) as unknown as {id:string;storage_path:string;approved_for_buyer:boolean;production_updates:{reporting_date:string;purchase_orders:{po_number:string;style:string;buyers:{name:string}|{name:string}[]|null}|{po_number:string;style:string;buyers:{name:string}|{name:string}[]|null}[]}[]}[]){const update=Array.isArray(item.production_updates)?item.production_updates[0]:item.production_updates;const poValue=update?.purchase_orders;const po=Array.isArray(poValue)?poValue[0]:poValue;if(!po)continue;const buyerValue=po.buyers;const buyer=Array.isArray(buyerValue)?buyerValue[0]?.name:buyerValue?.name;const {data:signed,error:signedError}=await supabase.storage.from('production-evidence').createSignedUrl(item.storage_path,60);if(signedError||!signed)continue;results.push({id:item.id,storage_path:item.storage_path,approved_for_buyer:item.approved_for_buyer,reporting_date:update.reporting_date,po:po.po_number,style:po.style,buyer:buyer??'Buyer',url:signed.signedUrl})}setRows(results)}catch(reason){notify(reason instanceof Error?reason.message:'Could not load production photos for review.')}finally{setLoading(false)}}
+  useEffect(()=>{void reload()},[live])
+  async function approve(row:PhotoReviewRow){if(!supabase)return;setBusy(row.id);try{const {data:userData}=await supabase.auth.getUser();if(!userData.user)throw new Error('Sign in again to review photos.');const {error}=await supabase.from('photo_approvals').update({approved_for_buyer:!row.approved_for_buyer,reviewed_by:userData.user.id,reviewed_at:new Date().toISOString()}).eq('id',row.id);if(error)throw error;setRows(current=>current.map(item=>item.id===row.id?{...item,approved_for_buyer:!row.approved_for_buyer}:item));notify(row.approved_for_buyer?'Photo approval removed.':'Photo approved for buyer visibility after the order is shared.')}catch(reason){notify(reason instanceof Error?reason.message:'Photo review failed.')}finally{setBusy('')}}
+  return <><div className="page-heading"><div><div className="eyebrow">BUYER-SAFE MEDIA</div><h1>Photo approvals</h1><p>Review each production image before a buyer can see it.</p></div><button className="button button-secondary" onClick={()=>void reload()} disabled={!live||loading}>Refresh</button></div>{!live&&<div className="workspace-warning"><LockKeyhole size={17}/><div><b>Connect a workspace to review production photos.</b><span>Synthetic preview images are not used for approval.</span></div></div>}<div className="workspace-warning"><ShieldCheck size={17}/><div><b>Approval is separate from order sharing.</b><span>Approved photos appear only when their order is shared with the buyer and only in that buyer's account.</span></div></div>{loading?<p className="modal-intro">Loading photo queue…</p>:<div className="photo-review-grid">{rows.map(row=><article className="photo-review-card" key={row.id}><img src={row.url} alt={`Production photo for ${row.po}`}/><div className="photo-review-copy"><span className="eyebrow">{row.po} · {row.reporting_date}</span><h3>{row.style}</h3><p>{row.buyer}</p><button className={`button ${row.approved_for_buyer?'button-secondary':'button-primary'}`} disabled={busy===row.id} onClick={()=>void approve(row)}>{busy===row.id?'Saving…':row.approved_for_buyer?'Remove buyer approval':'Approve for buyer'}{row.approved_for_buyer?<ShieldCheck size={15}/>:<Check size={15}/>}</button></div></article>)}{!rows.length&&<div className="empty-card"><ImagePlus size={20}/><b>No production photos are waiting for review</b><span>New uploads appear here. Unapproved photos stay private.</span></div>}</div>}</>
+}
+
+function IssueReviewModal({ order, onClose, notify }: { order: Order; onClose: () => void; notify: (message:string) => void }) {
+  const [originalTranscript,setOriginalTranscript]=useState('')
+  const [transcript,setTranscript]=useState(order.issue??'')
+  const [translation,setTranslation]=useState('')
+  const [category,setCategory]=useState('other')
+  const [buyerSafeText,setBuyerSafeText]=useState('')
+  const [buyerApproved,setBuyerApproved]=useState(false)
+  const [audioConsent,setAudioConsent]=useState(false)
+  const [aiConsent,setAiConsent]=useState(false)
+  const [provider,setProvider]=useState('')
+  const [audioUrl,setAudioUrl]=useState('')
+  const [busy,setBusy]=useState(false)
+  const [error,setError]=useState('')
+  const [preview,setPreview]=useState(!isSupabaseConfigured)
+  useEffect(()=>{
+    if(!supabase||!order.latestUpdateId)return
+    let active=true
+    void (async()=>{
+      const {data}=await supabase.from('issue_reviews').select('original_transcription,corrected_transcription,translation,issue_category,buyer_safe_text,buyer_safe_approved,ai_provider').eq('update_id',order.latestUpdateId).maybeSingle()
+      if(data&&active){setOriginalTranscript(data.original_transcription??'');setTranscript(data.corrected_transcription??data.original_transcription??order.issue??'');setTranslation(data.translation??'');setCategory(data.issue_category??'other');setBuyerSafeText(data.buyer_safe_text??'');setBuyerApproved(data.buyer_safe_approved??false);setProvider(data.ai_provider??'')}
+      if(order.latestAudioPath){const signed=await supabase.storage.from('production-evidence').createSignedUrl(order.latestAudioPath,60);if(active&&signed.data)setAudioUrl(signed.data.signedUrl)}
+    })().catch(()=>undefined)
+    return()=>{active=false}
+  },[order.latestUpdateId,order.latestAudioPath,order.issue])
+  async function transcribe(){
+    if(!audioConsent){setError('Confirm that you have permission to send this original recording to Gemini before transcription.');return}
+    if(!supabase||!order.latestUpdateId){setError('This is a synthetic preview note; it has no original audio to transcribe.');return}
+    setBusy(true);setError('')
+    try{
+      const result=await invokeProtectedFunction<{transcript:string;provider:string}>('transcribe-issue',{updateId:order.latestUpdateId})
+      setOriginalTranscript(result.transcript);setTranscript(result.transcript);setProvider(result.provider)
+      const {error:saveError}=await supabase.from('issue_reviews').update({original_transcription:result.transcript,ai_provider:result.provider,ai_state:'pending'}).eq('update_id',order.latestUpdateId)
+      if(saveError)throw new Error(saveError.message)
+    }catch(reason){setError(reason instanceof Error?reason.message:'Transcription failed. Original audio is retained; retry or use typed text.')}
+    setBusy(false)
+  }
+  async function translate(){
+    if(!aiConsent){setError('Confirm that this note may be sent to the configured AI provider for a review suggestion.');return}
+    if(!transcript.trim()){setError('Add or transcribe the source note first.');return}
+    setBusy(true);setError('')
+    try{
+      const result=await invokeProtectedFunction<{translation:string;category:string;provider:string}>('issue-assist',{transcript,sourceLanguage:'Tamil',targetLanguage:'English'})
+      setTranslation(result.translation);setCategory(result.category);setProvider(result.provider)
+    }catch(reason){setError(reason instanceof Error?reason.message:'AI assistance failed. You can still review the source note manually.')}
+    setBusy(false)
+  }
+  async function saveReview(approve:boolean){
+    if(!supabase||!order.latestUpdateId){setPreview(true);notify('Preview review edits are not written to a live workspace.');return}
+    setBusy(true);setError('')
+    const {data:userData}=await supabase.auth.getUser()
+    const {error:saveError}=await supabase.from('issue_reviews').update({original_transcription:originalTranscript||null,corrected_transcription:transcript!==originalTranscript?transcript:null,translation:translation||null,issue_category:category,ai_provider:provider||null,ai_state:approve?'approved':'pending',buyer_safe_text:buyerSafeText||null,buyer_safe_approved:approve&&buyerApproved,reviewed_by:userData.user?.id??null,reviewed_at:new Date().toISOString()}).eq('update_id',order.latestUpdateId)
+    setBusy(false)
+    if(saveError){setError(`Could not save the review: ${saveError.message}`);return}
+    notify(approve?'Review saved. Buyer visibility follows the separate approval selection.':'Review draft saved.')
+    onClose()
+  }
+  return <div className="modal-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><section className="modal-card issue-review-modal" role="dialog" aria-modal="true" aria-label="Review production issue"><div className="modal-heading"><div><span className="eyebrow">{order.po} · {order.stage}</span><h2>Review issue note</h2></div><button className="icon-button" onClick={onClose} aria-label="Close"><X size={19}/></button></div><p className="modal-intro">The original note stays attached. Transcription and translation are suggestions for a person to review.</p>{audioUrl&&<audio className="issue-audio" controls src={audioUrl}/>}{order.latestAudioPath&&<><div className="ai-data-note"><LockKeyhole size={14}/> Transcription sends the original audio to Gemini. Google's free tier may use submitted content to improve its products. Use only with factory/customer approval; the original remains stored in Threadline.</div><label className="ai-consent"><input type="checkbox" checked={audioConsent} onChange={e=>setAudioConsent(e.target.checked)}/><span>I have permission to send this recording to Gemini for transcription. I understand provider data-use terms must be approved.</span></label></>}<label className="form-label">Tamil transcription<textarea rows={4} value={transcript} onChange={e=>setTranscript(e.target.value)} placeholder="Type a correction or transcribe the original note…"/></label><div className="review-ai-row"><button type="button" className="button button-secondary" disabled={busy||!order.latestAudioPath||!audioConsent} onClick={()=>void transcribe()}><AudioLines size={15}/>{busy?'Working…':'Transcribe with Gemini'}</button><span>{originalTranscript?'Machine transcription kept for traceability':preview?'Preview note · not sent to a provider':''}</span></div><label className="ai-consent"><input type="checkbox" checked={aiConsent} onChange={e=>setAiConsent(e.target.checked)}/><span>Allow this text to be sent to Nemotron, with Gemini as fallback, for an English translation and category suggestion. Gemini free-tier content may be used to improve Google products.</span></label><div className="review-ai-row"><button type="button" className="button button-secondary" disabled={busy||!aiConsent} onClick={()=>void translate()}><Activity size={15}/>{busy?'Working…':'Suggest English translation'}</button>{provider&&<span>Suggestion from {provider} · requires review</span>}</div><label className="form-label">English translation<textarea rows={3} value={translation} onChange={e=>setTranslation(e.target.value)} placeholder="Review or enter an English translation…"/></label><label className="form-label">Issue category<select value={category} onChange={e=>setCategory(e.target.value)}><option value="material">Material availability</option><option value="equipment">Machine / equipment</option><option value="capacity">Production capacity</option><option value="quality">Quality / rework</option><option value="printing_finishing">Printing / finishing</option><option value="other">Other</option></select></label><div className="buyer-safe-editor"><label className="form-label">Buyer-safe remark <span className="optional-label">Optional</span><textarea rows={2} value={buyerSafeText} onChange={e=>setBuyerSafeText(e.target.value)} placeholder="Write only what is approved for the buyer portal…"/></label><label className="mismatch-ack"><input type="checkbox" checked={buyerApproved} onChange={e=>setBuyerApproved(e.target.checked)}/><span>Approve this separate remark for buyer visibility. Translation approval alone does not publish it.</span></label></div>{error&&<div className="form-error"><TriangleAlert size={15}/>{error}</div>}<div className="modal-actions"><button className="button button-secondary" onClick={onClose}>Close</button><button className="button button-secondary" disabled={busy} onClick={()=>void saveReview(false)}>Save review</button><button className="button button-primary" disabled={busy} onClick={()=>void saveReview(true)}>Approve review <Check size={15}/></button></div></section></div>
+}
+
+function ReportsPage({ orders, notify }: { orders: Order[]; notify: (s: string) => void }) {
+  const [buyer, setBuyer] = useState(''); const [weekStart,setWeekStart]=useState(()=>{const d=new Date();d.setDate(d.getDate()-((d.getDay()+6)%7));return localInputDate(d)})
+  const [busy,setBusy]=useState(false)
+  const buyers=[...new Map(orders.filter(o=>o.buyerId).map(o=>[o.buyerId!,{id:o.buyerId!,name:o.buyer}])).values()]
+  useEffect(()=>{if(!buyer&&buyers[0])setBuyer(buyers[0].id)},[buyers,buyer])
+  const chosenBuyer=buyers.find(b=>b.id===buyer)
+  const reportOrders=orders.filter(o=>o.buyerId===buyer&&o.state!=='draft'&&o.state!=='cancelled')
+  const weekEnd=(()=>{const d=new Date(`${weekStart}T00:00:00`);d.setDate(d.getDate()+6);return localInputDate(d)})()
+  async function recordReport(format:'pdf'|'xlsx'){
+    if(!supabase||!chosenBuyer){notify('Sign in to a connected workspace and select a buyer account.');return}
+    setBusy(true)
+    try{
+      const {data:userData}=await supabase.auth.getUser();if(!userData.user)throw new Error('Your session has expired. Please sign in again.')
+      const snapshot=reportOrders.map(o=>({po:o.po,style:o.style,colour:o.colour,quantity:o.quantity,completed:o.completed,remaining:Math.max(0,o.quantity-o.completed),progress:o.quantity?Math.round(o.completed/o.quantity*100):0,exFactory:o.shipDate,status:o.status==='insufficient'?'Update pending':o.status==='green'?'On track':o.status==='amber'?'Watch':'At risk',milestones:(o.milestones??[]).filter(m=>m.buyerVisible).map(m=>`${m.name}: ${m.date} (${m.status})`).join(' | ')}))
+      let outputBlob:Blob;const filename=`Threadline-${chosenBuyer.name.replace(/[^a-z0-9]+/gi,'-')}-${weekStart}.${format}`
+      if(format==='pdf'){
+        const {jsPDF}=await import('jspdf')
+        const doc=new jsPDF();doc.setFont('helvetica','bold');doc.setFontSize(20);doc.text('Threadline · Production update',16,20);doc.setFont('helvetica','normal');doc.setFontSize(11);doc.text(chosenBuyer.name,16,29);doc.text(`Reporting week: ${weekStart} to ${weekEnd}`,16,36);doc.text(`Generated: ${new Date().toLocaleString('en-IN')}`,16,43)
+        let y=56
+        for(const row of snapshot){if(y>260){doc.addPage();y=20}doc.setFont('helvetica','bold');doc.text(`${row.po} · ${row.style}`,16,y);doc.setFont('helvetica','normal');doc.text(`${row.colour} · ${row.progress}% complete · ${moneyless(row.completed)} / ${moneyless(row.quantity)} pcs`,16,y+7);doc.text(`Remaining ${moneyless(row.remaining)} · Ex-factory ${row.exFactory} · ${row.status}`,16,y+14);const lines=doc.splitTextToSize(`Milestones: ${row.milestones||'No buyer-visible milestones shared'}`,175);doc.text(lines,16,y+21);y+=31+lines.length*5}
+        if(!snapshot.length)doc.text('No released or completed orders for this buyer.',16,y);outputBlob=doc.output('blob')
+      }else{
+        const ExcelJS=(await import('exceljs')).default
+        const workbook=new ExcelJS.Workbook();workbook.creator='Threadline';workbook.created=new Date();const sheet=workbook.addWorksheet('Buyer report');sheet.columns=[{header:'PO',key:'po',width:18},{header:'Style',key:'style',width:30},{header:'Colour',key:'colour',width:22},{header:'Order qty',key:'quantity',width:14},{header:'Completed',key:'completed',width:14},{header:'Remaining',key:'remaining',width:14},{header:'Progress %',key:'progress',width:14},{header:'Ex-factory',key:'exFactory',width:16},{header:'Status',key:'status',width:18},{header:'Buyer-visible milestones',key:'milestones',width:56}];sheet.addRows(snapshot);sheet.autoFilter={from:'A1',to:'J1'};sheet.views=[{state:'frozen',ySplit:1}];sheet.getRow(1).font={bold:true,color:{argb:'FFFFFFFF'}};sheet.getRow(1).fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF244C45'}};sheet.addRow([]);sheet.addRow(['Buyer',chosenBuyer.name]);sheet.addRow(['Reporting week',`${weekStart} to ${weekEnd}`]);sheet.addRow(['Generated',new Date().toLocaleString('en-IN')]);const buffer=await workbook.xlsx.writeBuffer();outputBlob=new Blob([buffer],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})
+      }
+      const {error:logError}=await supabase.from('weekly_reports').insert({buyer_id:buyer,week_start:weekStart,week_end:weekEnd,format,generated_by:userData.user.id})
+      if(logError)throw logError
+      downloadBlob(outputBlob,filename)
+      notify(`${format.toUpperCase()} report generated and logged.`)
+    }catch(reason){notify(reason instanceof Error?`Report failed: ${reason.message}`:'Report generation failed.')}
+    finally{setBusy(false)}
+  }
+  const avg=reportOrders.length?Math.round(reportOrders.reduce((s,o)=>s+(o.quantity?o.completed/o.quantity:0),0)/reportOrders.length*100):0
+  return <><div className="page-heading"><div><div className="eyebrow">BUYER COMMUNICATION</div><h1>Weekly reports</h1><p>Prepare a buyer-ready progress update with approved information.</p></div></div><div className="report-layout"><div className="panel-card report-config"><div className="panel-heading"><div><h3>Build a report</h3><span>Select an account and week</span></div></div><label className="form-label">Buyer account<select value={buyer} onChange={e=>setBuyer(e.target.value)}><option value="">Select buyer from live workspace</option>{buyers.map(b=><option key={b.id} value={b.id}>{b.name}</option>)}</select></label><label className="form-label">Week starting<input type="date" value={weekStart} onChange={e=>setWeekStart(e.target.value)}/></label><div className="report-includes"><b>Included in this report</b><span><Check size={15}/> Buyer-authorised released and complete orders</span><span><Check size={15}/> Progress, ex-factory dates and buyer-visible milestones</span><span><ShieldCheck size={15}/> Internal issues, unapproved photos and notes are excluded</span></div>{!supabase&&<div className="form-error"><TriangleAlert size={15}/> Preview mode cannot generate a report from synthetic data.</div>}<div className="report-actions"><button className="button button-secondary" disabled={busy||!supabase||!chosenBuyer} onClick={()=>void recordReport('pdf')}><Download size={15}/>{busy?'Generating…':'Export PDF'}</button><button className="button button-primary" disabled={busy||!supabase||!chosenBuyer} onClick={()=>void recordReport('xlsx')}><FileSpreadsheet size={15}/>{busy?'Generating…':'Export Excel'}</button></div></div><div className="panel-card report-preview"><div className="preview-doc-top"><span className="preview-brand">threadline<span> / </span>weekly update</span><span className="doc-period">{weekStart} — {weekEnd}</span></div><h2>{chosenBuyer?.name??'Select a buyer'}</h2><p>Production snapshot · {new Date().toLocaleDateString('en-IN')}</p><div className="preview-stats"><div><span>ORDERS IN REPORT</span><b>{reportOrders.length.toString().padStart(2,'0')}</b></div><div><span>PIECES IN PRODUCTION</span><b>{moneyless(reportOrders.reduce((s,o)=>s+o.quantity,0))}</b></div><div><span>AVERAGE COMPLETE</span><b>{avg}%</b></div></div><div className="preview-list">{reportOrders.map(o=><div key={o.id}><span><b>{o.po}</b><small>{o.style} · {o.colour}</small></span><span className="mini-progress"><i style={{width:`${o.quantity?Math.round(o.completed/o.quantity*100):0}%`}}/></span><b>{o.quantity?Math.round(o.completed/o.quantity*100):0}%</b></div>)}</div><div className="preview-safe"><ShieldCheck size={14}/> Buyer-safe fields only · unapproved photos and remarks excluded</div></div></div></>
+}
+function localInputDate(d:Date){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
+function downloadBlob(blob:Blob,name:string){const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
+
+type PlanStage = { stage_name: string; sequence_no: number; applicable: boolean; target_quantity: string; tna_milestone_name: string; lines: string[]; submitter_ids:string[] }
+type PlanMilestone = { name: string; target_date: string; sequence_no: number; buyer_visible: boolean; notes: string }
+function PlanModal({ order, live, onClose, onSaved }: { order: Order; live: boolean; onClose: () => void; onSaved: () => Promise<void> }) {
+  const [stageTemplates,setStageTemplates]=useState<{id:string;name:string;steps:{stage_name:string;sequence_no:number;default_applicable:boolean}[]}[]>([])
+  const [tnaTemplates,setTnaTemplates]=useState<{id:string;name:string;date_basis:string;milestones:{name:string;offset_days:number|null;sequence_no:number}[]}[]>([])
+  const [lines,setLines]=useState<{id:string;name:string}[]>([])
+  const [supervisors,setSupervisors]=useState<{id:string;display_name:string}[]>([])
+  const [stageTemplate,setStageTemplate]=useState(''); const [tnaTemplate,setTnaTemplate]=useState('')
+  const [stages,setStages]=useState<PlanStage[]>([]); const [milestones,setMilestones]=useState<PlanMilestone[]>([]); const [shareBuyer,setShareBuyer]=useState(false)
+  const [loading,setLoading]=useState(true); const [saving,setSaving]=useState(false); const [error,setError]=useState('')
+  useEffect(()=>{
+    if(!live||!supabase||!order.unitId){setLoading(false);return}
+    let active=true
+    void (async()=>{
+      try {
+        const [st,tm,ln,sp]=await Promise.all([
+          supabase!.from('stage_templates').select('id,name,stage_template_steps(stage_name,sequence_no,default_applicable)').eq('active',true).or(`unit_id.eq.${order.unitId},unit_id.is.null`).order('name'),
+          supabase!.from('tna_templates').select('id,name,date_basis,tna_template_milestones(name,offset_days,sequence_no)').eq('active',true).or(`unit_id.eq.${order.unitId},unit_id.is.null`).order('name'),
+          supabase!.from('production_lines').select('id,name').eq('unit_id',order.unitId).eq('active',true).order('name'),
+          supabase!.from('profiles').select('id,display_name').eq('role','supervisor').eq('active',true).order('display_name')
+        ])
+        if(st.error)throw st.error;if(tm.error)throw tm.error;if(ln.error)throw ln.error;if(sp.error)throw sp.error
+        const stageRows=(st.data??[]) as unknown as {id:string;name:string;stage_template_steps:{stage_name:string;sequence_no:number;default_applicable:boolean}[]}[]
+        const tnaRows=(tm.data??[]) as unknown as {id:string;name:string;date_basis:string;tna_template_milestones:{name:string;offset_days:number|null;sequence_no:number}[]}[]
+        if(!active)return
+        setStageTemplates(stageRows.map(t=>({...t,steps:[...t.stage_template_steps].sort((a,b)=>a.sequence_no-b.sequence_no)})))
+        setTnaTemplates(tnaRows.map(t=>({...t,milestones:[...t.tna_template_milestones].sort((a,b)=>a.sequence_no-b.sequence_no)})))
+        setLines((ln.data??[]) as {id:string;name:string}[])
+        setSupervisors((sp.data??[]) as {id:string;display_name:string}[])
+      } catch(reason){if(active)setError(reason instanceof Error?reason.message:'Could not load planning templates.')}
+      finally{if(active)setLoading(false)}
+    })()
+    return()=>{active=false}
+  },[live,order.unitId])
+  const selectedStageTemplate=stageTemplates.find(t=>t.id===stageTemplate)
+  const selectedTnaTemplate=tnaTemplates.find(t=>t.id===tnaTemplate)
+  function chooseStageTemplate(id:string){setStageTemplate(id);const template=stageTemplates.find(t=>t.id===id);setStages((template?.steps??[]).map((step,i)=>({stage_name:step.stage_name,sequence_no:i+1,applicable:step.default_applicable,target_quantity:String(order.quantity),tna_milestone_name:'',lines:[],submitter_ids:[]})))}
+  function moveStage(index:number,direction:number){setStages(current=>{const target=index+direction;if(target<0||target>=current.length)return current;const next=[...current];[next[index],next[target]]=[next[target],next[index]];return next.map((stage,i)=>({...stage,sequence_no:i+1}))})}
+  function chooseTnaTemplate(id:string){setTnaTemplate(id);const template=tnaTemplates.find(t=>t.id===id);setMilestones((template?.milestones??[]).map((item,i)=>{if(item.offset_days===null)return{name:item.name,target_date:'',sequence_no:i+1,buyer_visible:true,notes:''};const date=new Date(`${order.shipDate}T00:00:00`);date.setDate(date.getDate()+item.offset_days);return{name:item.name,target_date:date.toISOString().slice(0,10),sequence_no:i+1,buyer_visible:true,notes:''}}))}
+  async function savePlan(shouldRelease:boolean){
+    setSaving(true);setError('')
+    try{
+      if(!live||!supabase)throw new Error('Planning changes require a connected workspace. Preview data is not saved.')
+      if(!stageTemplate||!tnaTemplate)throw new Error('Choose both an active production route and TNA template.')
+      if(!stages.some(stage=>stage.applicable))throw new Error('At least one production stage must apply to this order.')
+      if(!milestones.length||milestones.some(m=>!m.target_date))throw new Error('Add a target date for every TNA milestone.')
+      if(shouldRelease&&stages.some(s=>s.applicable&&!s.submitter_ids.length))throw new Error('Assign at least one supervisor to every applicable stage before release.')
+      const {error:rpcError}=await supabase.rpc('save_order_plan',{order_id_input:order.id,stage_template_id_input:stageTemplate,tna_template_id_input:tnaTemplate,stages_input:stages.map((s,i)=>({...s,sequence_no:i+1,target_quantity:Number(s.target_quantity)||order.quantity,lines:s.lines.map(line_id=>({line_id,submitter_ids:[]}))})),milestones_input:milestones.map((m,i)=>({...m,sequence_no:i+1})),release_input:shouldRelease,buyer_visible_input:shouldRelease&&shareBuyer})
+      if(rpcError)throw rpcError
+      await onSaved()
+    }catch(reason){setError(reason instanceof Error?reason.message:'Could not save the production plan.')}
+    finally{setSaving(false)}
+  }
+  return <ModalFrame title="Plan production" eyebrow={`${order.po} · ${order.unit}`} onClose={onClose}>
+    {!live&&<div className="workspace-warning"><Settings2 size={17}/><div><b>Planning needs a connected workspace.</b><span>This preview order has no real template, line, or calendar records. Configure Supabase to create its production plan.</span></div></div>}
+    {loading?<p className="modal-intro">Loading active templates and production lines…</p>:<>
+      <p className="modal-intro">Choose the route and milestone template, then review the generated sequence and dates before releasing the PO.</p>
+      <div className="form-grid"><label className="form-label">Production route<select value={stageTemplate} onChange={e=>chooseStageTemplate(e.target.value)}><option value="">Select active template</option>{stageTemplates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label><label className="form-label">TNA template<select value={tnaTemplate} onChange={e=>chooseTnaTemplate(e.target.value)}><option value="">Select active template</option>{tnaTemplates.map(t=><option key={t.id} value={t.id}>{t.name}</option>)}</select></label></div>
+      {selectedStageTemplate&&<section className="plan-editor"><div className="panel-heading"><div><h3>Production stages</h3><span>Order-specific route · quantity target {moneyless(order.quantity)}</span></div></div>{stages.map((stage,index)=><div className="plan-stage" key={`${stage.stage_name}-${index}`}><label className="plan-applicable"><input type="checkbox" checked={stage.applicable} onChange={e=>setStages(xs=>xs.map((x,i)=>i===index?{...x,applicable:e.target.checked}:x))}/><b>{index+1}. {stage.stage_name}</b></label><div className="plan-reorder"><button type="button" className="icon-button" aria-label={`Move ${stage.stage_name} up`} disabled={index===0} onClick={()=>moveStage(index,-1)}><ChevronUp size={16}/></button><button type="button" className="icon-button" aria-label={`Move ${stage.stage_name} down`} disabled={index===stages.length-1} onClick={()=>moveStage(index,1)}><ChevronDown size={16}/></button></div>{stage.applicable&&<><label className="form-label">Target quantity<input type="number" min="0" value={stage.target_quantity} onChange={e=>setStages(xs=>xs.map((x,i)=>i===index?{...x,target_quantity:e.target.value}:x))}/></label><label className="form-label">Assigned production lines<select multiple value={stage.lines} onChange={e=>setStages(xs=>xs.map((x,i)=>i===index?{...x,lines:Array.from(e.target.selectedOptions,o=>o.value)}:x))}>{lines.map(line=><option key={line.id} value={line.id}>{line.name}</option>)}</select><small>Use Ctrl/⌘ to select multiple lines.</small></label><label className="form-label">Assigned supervisors<select multiple value={stage.submitter_ids} onChange={e=>setStages(xs=>xs.map((x,i)=>i===index?{...x,submitter_ids:Array.from(e.target.selectedOptions,o=>o.value)}:x))}>{supervisors.map(person=><option key={person.id} value={person.id}>{person.display_name}</option>)}</select><small>At least one supervisor is required before release.</small></label><label className="form-label">Related milestone<select value={stage.tna_milestone_name} onChange={e=>setStages(xs=>xs.map((x,i)=>i===index?{...x,tna_milestone_name:e.target.value}:x))}><option value="">Ex-factory date</option>{milestones.map(m=><option key={m.name} value={m.name}>{m.name}</option>)}</select></label></>}</div>)}</section>}
+      {selectedTnaTemplate&&<section className="plan-editor"><div className="panel-heading"><div><h3>TNA milestone dates</h3><span>Template dates are generated from ex-factory and can be adjusted here.</span></div></div>{milestones.map((m,index)=><div className="plan-milestone" key={`${m.name}-${index}`}><b>{m.name}</b><label className="form-label">Target date<input type="date" value={m.target_date} onChange={e=>setMilestones(xs=>xs.map((x,i)=>i===index?{...x,target_date:e.target.value}:x))}/></label><label className="mismatch-ack"><input type="checkbox" checked={m.buyer_visible} onChange={e=>setMilestones(xs=>xs.map((x,i)=>i===index?{...x,buyer_visible:e.target.checked}:x))}/><span>Share milestone with buyer</span></label></div>)}</section>}
+      {selectedTnaTemplate&&<label className="mismatch-ack buyer-plan-approval"><input type="checkbox" checked={shareBuyer} onChange={e=>setShareBuyer(e.target.checked)}/><span>Share this released order in the buyer portal. Only milestones and remarks separately marked buyer-visible will appear.</span></label>}
+      {live&&!loading&&!stageTemplates.length&&<div className="form-error"><TriangleAlert size={15}/>No active stage templates exist for this unit. Ask an administrator to configure templates.</div>}
+      {error&&<div className="form-error"><TriangleAlert size={15}/>{error}</div>}
+      <div className="modal-actions"><button className="button button-secondary" onClick={onClose}>Cancel</button><button className="button button-secondary" disabled={saving||!live||!stageTemplate||!tnaTemplate} onClick={()=>void savePlan(false)}>Save as draft</button><button className="button button-primary" disabled={saving||!live||!stageTemplate||!tnaTemplate} onClick={()=>void savePlan(true)}>{saving?'Saving…':'Review and release'} <ArrowRight size={15}/></button></div>
+    </>}
+  </ModalFrame>
+}
+
+function BuyerPage({ buyerName, orders, setSelected }: { buyerName: string; orders: Order[]; setSelected: (o: Order) => void }) {
+  return <><div className="buyer-welcome"><div className="eyebrow">{buyerName.toUpperCase()} · BUYER PORTAL</div><h1>Your production, at a glance.</h1><p>View current progress and milestones for your authorised orders.</p></div><div className="buyer-banner"><div className="buyer-banner-icon"><ShieldCheck size={19} /></div><div><b>Your orders are private</b><span>This portal only shows orders shared with your account.</span></div><span className="read-only-label"><LockKeyhole size={13} /> Read only</span></div><div className="section-heading buyer-list-heading"><div><h2>Your orders</h2><span className="section-subtitle">Progress last updated by the production team</span></div><span className="buyer-order-count">{orders.length} orders</span></div><div className="buyer-order-grid">{orders.map(o => <button className="buyer-order-card" key={o.id} onClick={() => setSelected(o)}><div className="buyer-card-top"><span>{o.po}</span><BuyerStatusBadge state={o.state} hasProgress={o.completed>0} /></div><h3>{o.style}</h3><p>{o.colour} <i /> Ex-factory {new Date(`${o.shipDate}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}</p><div className="buyer-card-progress"><div><b>{Math.round(o.completed / o.quantity * 100)}%</b><span>complete</span></div><div className="progress-track"><i style={{ width: `${Math.round(o.completed / o.quantity * 100)}%` }} /></div></div><div className="buyer-card-foot"><span>Current stage <b>{o.stage}</b></span><span>Updated {o.updatedAt}</span></div></button>)}</div></>
+}
+
+function WorkspacePage({live,notify}:{live:boolean;notify:(message:string)=>void}) {
+  const [buyers,setBuyers]=useState<{id:string;name:string;active:boolean}[]>([])
+  const [units,setUnits]=useState<{id:string;name:string;working_days:number[];timezone:string}[]>([])
+  const [lines,setLines]=useState<{id:string;unit_id:string;name:string;active:boolean}[]>([])
+  const [stageTemplates,setStageTemplates]=useState<{id:string;unit_id:string|null;name:string;active:boolean;version:number}[]>([])
+  const [tnaTemplates,setTnaTemplates]=useState<{id:string;unit_id:string|null;name:string;active:boolean;version:number}[]>([])
+  const [loading,setLoading]=useState(live);const [busy,setBusy]=useState(false)
+  const [buyerName,setBuyerName]=useState('');const [unitName,setUnitName]=useState('');const [workingDays,setWorkingDays]=useState<number[]>([])
+  const [lineName,setLineName]=useState('');const [lineUnit,setLineUnit]=useState('')
+  const [templateName,setTemplateName]=useState('');const [templateUnit,setTemplateUnit]=useState('');const [templateSteps,setTemplateSteps]=useState('');const [templateActive,setTemplateActive]=useState(false)
+  const [tnaName,setTnaName]=useState('');const [tnaUnit,setTnaUnit]=useState('');const [tnaSteps,setTnaSteps]=useState('');const [tnaActive,setTnaActive]=useState(false)
+  const [riskUnit,setRiskUnit]=useState('');const [recentDays,setRecentDays]=useState('');const [amberRatio,setAmberRatio]=useState('');const [redRatio,setRedRatio]=useState('');const [staleHours,setStaleHours]=useState('');const [approveRisk,setApproveRisk]=useState(false)
+  const [holidayUnit,setHolidayUnit]=useState('');const [holidayDate,setHolidayDate]=useState('');const [holidayLabel,setHolidayLabel]=useState('')
+  async function reload(){if(!supabase||!live){setLoading(false);return}setLoading(true);try{const [b,u,l,s,t]=await Promise.all([supabase.from('buyers').select('id,name,active').order('name'),supabase.from('production_units').select('id,name,working_days,timezone').order('name'),supabase.from('production_lines').select('id,unit_id,name,active').order('name'),supabase.from('stage_templates').select('id,unit_id,name,active,version').order('name'),supabase.from('tna_templates').select('id,unit_id,name,active,version').order('name')]);for(const q of[b,u,l,s,t])if(q.error)throw q.error;setBuyers(b.data??[]);setUnits(u.data??[]);setLines(l.data??[]);setStageTemplates(s.data??[]);setTnaTemplates(t.data??[])}catch(reason){notify(reason instanceof Error?reason.message:'Could not load workspace configuration.')}finally{setLoading(false)}}
+  useEffect(()=>{void reload()},[live])
+  async function save(action:()=>Promise<void>){if(!supabase||!live){notify('Configuration requires a signed-in administrator.');return}setBusy(true);try{await action();await reload();notify('Workspace configuration saved.')}catch(reason){notify(reason instanceof Error?reason.message:'Configuration could not be saved.')}finally{setBusy(false)}}
+  async function createTemplate(kind:'stage'|'tna'){
+    const name=(kind==='stage'?templateName:tnaName).trim(),unitId=kind==='stage'?templateUnit:tnaUnit,raw=kind==='stage'?templateSteps:tnaSteps,active=kind==='stage'?templateActive:tnaActive
+    const rows=raw.split('\n').map(line=>line.trim()).filter(Boolean)
+    if(!name||!unitId||!rows.length)throw new Error('Add a template name, production unit and at least one row.')
+    if(kind==='stage'){
+      const parsed=rows.map(stage_name=>({stage_name,sequence_no:0,default_applicable:true}))
+      await save(async()=>{const {data,error}=await supabase!.from('stage_templates').insert({unit_id:unitId,name,active:false}).select('id').single();if(error)throw error;const {error:stepError}=await supabase!.from('stage_template_steps').insert(parsed.map((step,i)=>({...step,template_id:data.id,sequence_no:i+1})));if(stepError)throw stepError;if(active){const {error:activateError}=await supabase!.from('stage_templates').update({active:true}).eq('id',data.id);if(activateError)throw activateError}})
+      setTemplateName('');setTemplateSteps('');setTemplateActive(false)
+    }else{
+      const parsed=rows.map((line,i)=>{const [milestone,offset]=line.split('|').map(value=>value.trim());if(!milestone)throw new Error(`Add a milestone name on line ${i+1}.`);const offsetDays=offset===''||offset===undefined?null:Number(offset);if(offsetDays!==null&&!Number.isInteger(offsetDays))throw new Error(`Offset on line ${i+1} must be whole days, or blank for manual date entry.`);return{name:milestone,offset_days:offsetDays,sequence_no:i+1}})
+      await save(async()=>{const {data,error}=await supabase!.from('tna_templates').insert({unit_id:unitId,name,date_basis:parsed.some(m=>m.offset_days===null)?'manual':'ex_factory_offset',active:false}).select('id').single();if(error)throw error;const {error:stepError}=await supabase!.from('tna_template_milestones').insert(parsed.map(m=>({...m,template_id:data.id})));if(stepError)throw stepError;if(active){const {error:activateError}=await supabase!.from('tna_templates').update({active:true}).eq('id',data.id);if(activateError)throw activateError}})
+      setTnaName('');setTnaSteps('');setTnaActive(false)
+    }
+  }
+  const weekdays=[['Sun',0],['Mon',1],['Tue',2],['Wed',3],['Thu',4],['Fri',5],['Sat',6]] as const
+  return <><div className="page-heading"><div><div className="eyebrow">ADMINISTRATION</div><h1>Workspace setup</h1><p>Use confirmed factory information. Unapproved thresholds and calendars stay unset.</p></div><button className="button button-secondary" onClick={()=>void reload()} disabled={!live||loading}>Refresh</button></div>{!live&&<div className="workspace-warning"><Settings2 size={17}/><div><b>Connect a Supabase project and sign in as an administrator.</b><span>Preview mode does not save workspace configuration.</span></div></div>}{loading&&<p className="modal-intro">Loading workspace configuration…</p>}
+    {live&&<><div className="settings-grid"><SetupSummary title="Buyers" count={buyers.length} detail="Buyer accounts"/><SetupSummary title="Production units" count={units.length} detail="Units with configured calendars"/><SetupSummary title="Production lines" count={lines.length} detail="Active and inactive lines"/><SetupSummary title="Templates" count={stageTemplates.length+tnaTemplates.length} detail="Stage routes and TNA schedules"/></div>
+    <div className="config-forms"><section className="panel-card config-card"><div className="panel-heading"><div><h3>Buyers and production units</h3><span>Use verified customer names and calendars.</span></div></div><form onSubmit={e=>{e.preventDefault();void save(async()=>{const {error}=await supabase!.from('buyers').insert({name:buyerName.trim()});if(error)throw error});setBuyerName('')}}><label className="form-label">Add buyer<input required value={buyerName} onChange={e=>setBuyerName(e.target.value)} placeholder="Confirmed buyer name"/></label><button className="button button-secondary" disabled={busy}>Add buyer</button></form><form onSubmit={e=>{e.preventDefault();if(!workingDays.length){notify('Select the confirmed working days before saving this unit.');return}void save(async()=>{const {error}=await supabase!.from('production_units').insert({name:unitName.trim(),timezone:'Asia/Kolkata',working_days:workingDays});if(error)throw error});setUnitName('')}}><label className="form-label">Add production unit<input required value={unitName} onChange={e=>setUnitName(e.target.value)} placeholder="Factory/unit name"/></label><div className="weekday-picks">{weekdays.map(([label,value])=><label key={value}><input type="checkbox" checked={workingDays.includes(value)} onChange={e=>setWorkingDays(current=>e.target.checked?[...current,value]:current.filter(day=>day!==value))}/>{label}</label>)}</div><button className="button button-secondary" disabled={busy}>Add unit</button></form></section>
+    <section className="panel-card config-card"><div className="panel-heading"><div><h3>Production lines</h3><span>Assign lines to a unit before order planning.</span></div></div><form onSubmit={e=>{e.preventDefault();void save(async()=>{const {error}=await supabase!.from('production_lines').insert({unit_id:lineUnit,name:lineName.trim()});if(error)throw error});setLineName('')}}><label className="form-label">Production unit<select required value={lineUnit} onChange={e=>setLineUnit(e.target.value)}><option value="">Select unit</option>{units.map(unit=><option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label><label className="form-label">Line name<input required value={lineName} onChange={e=>setLineName(e.target.value)} placeholder="Line name or code"/></label><button className="button button-secondary" disabled={busy||!units.length}>Add production line</button></form></section>
+    <section className="panel-card config-card"><div className="panel-heading"><div><h3>Stage route templates</h3><span>Enter one stage per line in its intended sequence.</span></div></div><form onSubmit={e=>{e.preventDefault();void createTemplate('stage')}}><label className="form-label">Template name<input required value={templateName} onChange={e=>setTemplateName(e.target.value)} placeholder="Customer-approved route"/></label><label className="form-label">Production unit<select required value={templateUnit} onChange={e=>setTemplateUnit(e.target.value)}><option value="">Select unit</option>{units.map(unit=><option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label><label className="form-label">Stages<textarea required rows={5} value={templateSteps} onChange={e=>setTemplateSteps(e.target.value)} placeholder={'Cutting\nStitching\nQuality check\nPacking'}/></label><label className="mismatch-ack"><input type="checkbox" checked={templateActive} onChange={e=>setTemplateActive(e.target.checked)}/><span>Activate this template after checking it against the approved factory route.</span></label><button className="button button-secondary" disabled={busy}>Save stage template</button></form><TemplateList rows={stageTemplates} units={units} onToggle={(id,active)=>void save(async()=>{const {error}=await supabase!.from('stage_templates').update({active}).eq('id',id);if(error)throw error})}/></section>
+    <section className="panel-card config-card"><div className="panel-heading"><div><h3>TNA templates</h3><span>Use one milestone per line: “Name | days from ex-factory”. Negative numbers are before ship date.</span></div></div><form onSubmit={e=>{e.preventDefault();void createTemplate('tna')}}><label className="form-label">Template name<input required value={tnaName} onChange={e=>setTnaName(e.target.value)} placeholder="Customer-approved TNA"/></label><label className="form-label">Production unit<select required value={tnaUnit} onChange={e=>setTnaUnit(e.target.value)}><option value="">Select unit</option>{units.map(unit=><option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label><label className="form-label">Milestones<textarea required rows={5} value={tnaSteps} onChange={e=>setTnaSteps(e.target.value)} placeholder={'Fabric in-house | -30\nCutting start | -20\nPacking complete | -3'}/></label><label className="mismatch-ack"><input type="checkbox" checked={tnaActive} onChange={e=>setTnaActive(e.target.checked)}/><span>Activate only after confirming every milestone and offset with the customer.</span></label><button className="button button-secondary" disabled={busy}>Save TNA template</button></form><TemplateList rows={tnaTemplates} units={units} onToggle={(id,active)=>void save(async()=>{const {error}=await supabase!.from('tna_templates').update({active}).eq('id',id);if(error)throw error})}/></section>
+    <section className="panel-card config-card"><div className="panel-heading"><div><h3>Working days and holidays</h3><span>Unit working days are stored on the production unit.</span></div></div><div className="config-record-list">{units.map(unit=><div key={unit.id}><b>{unit.name}</b><span>{unit.working_days.length?unit.working_days.map(d=>weekdays.find(day=>day[1]===d)?.[0]??d).join(', '):'No working calendar configured'}</span></div>)}</div><form onSubmit={e=>{e.preventDefault();void save(async()=>{const {error}=await supabase!.from('unit_holidays').insert({unit_id:holidayUnit,holiday_date:holidayDate,label:holidayLabel.trim()});if(error)throw error});setHolidayLabel('')}}><label className="form-label">Unit<select required value={holidayUnit} onChange={e=>setHolidayUnit(e.target.value)}><option value="">Select unit</option>{units.map(unit=><option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label><label className="form-label">Holiday<input required type="date" value={holidayDate} onChange={e=>setHolidayDate(e.target.value)}/></label><label className="form-label">Reason<input required value={holidayLabel} onChange={e=>setHolidayLabel(e.target.value)} placeholder="Holiday label"/></label><button className="button button-secondary" disabled={busy||!units.length}>Add holiday</button></form></section>
+    <section className="panel-card config-card"><div className="panel-heading"><div><h3>Production risk policy</h3><span>Set thresholds only after company approval. Empty fields mean no policy is active.</span></div></div><form onSubmit={e=>{e.preventDefault();if(!approveRisk){notify('Only save thresholds after the authorised company approver confirms them.');return}void save(async()=>{const {error}=await supabase!.from('risk_configuration').upsert({unit_id:riskUnit,config_name:'Approved unit policy',recent_workdays:Number(recentDays),amber_required_rate_ratio:Number(amberRatio),red_required_rate_ratio:Number(redRatio),stale_after_hours:Number(staleHours),provisional:!approveRisk,approved_by:approveRisk?(await supabase!.auth.getUser()).data.user?.id:null,approved_at:approveRisk?new Date().toISOString():null},{onConflict:'unit_id'});if(error)throw error});setAmberRatio('');setRedRatio('');setApproveRisk(false)}}><label className="form-label">Production unit<select required value={riskUnit} onChange={e=>setRiskUnit(e.target.value)}><option value="">Select unit</option>{units.map(unit=><option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label><div className="form-grid"><label className="form-label">Recent workdays<input required type="number" min="1" value={recentDays} onChange={e=>setRecentDays(e.target.value)}/></label><label className="form-label">Amber required-rate ratio<input required type="number" min="0" step="0.01" value={amberRatio} onChange={e=>setAmberRatio(e.target.value)} placeholder="Company approved"/></label><label className="form-label">Red required-rate ratio<input required type="number" min="0" step="0.01" value={redRatio} onChange={e=>setRedRatio(e.target.value)} placeholder="Company approved"/></label><label className="form-label">Stale after hours<input required type="number" min="1" value={staleHours} onChange={e=>setStaleHours(e.target.value)}/></label></div><label className="mismatch-ack"><input type="checkbox" checked={approveRisk} onChange={e=>setApproveRisk(e.target.checked)}/><span>I am authorised to approve these company risk thresholds.</span></label><button className="button button-secondary" disabled={busy||!units.length}>Save risk policy</button></form></section>
+    </div><div className="workspace-warning"><Users size={17}/><div><b>User provisioning and buyer access</b><span>Create the auth user first, then add a matching profile. Map buyer users to buyer accounts in Supabase administration; no invitation or buyer-mapping UI is provided yet.</span></div></div></>}
+  </>
+}
+function SetupSummary({title,count,detail}:{title:string;count:number;detail:string}){return <div className="setting-card"><div className="setting-icon"><Settings2 size={17}/></div><div className="setting-copy"><b>{title}</b><span>{detail}</span></div><span className="setting-count">{count}</span></div>}
+function TemplateList({rows,units,onToggle}:{rows:{id:string;unit_id:string|null;name:string;active:boolean;version:number}[];units:{id:string;name:string}[];onToggle:(id:string,active:boolean)=>void}){return <div className="config-record-list">{rows.map(row=><div key={row.id}><span><b>{row.name}</b><small>{units.find(u=>u.id===row.unit_id)?.name??'All units'} · v{row.version} · {row.active?'Active':'Inactive'}</small></span><button className="text-button" onClick={()=>onToggle(row.id,!row.active)}>{row.active?'Deactivate':'Activate'}</button></div>)}{!rows.length&&<p className="buyer-empty-note">No templates configured yet.</p>}</div>}
+
+function OrderDrawer({ order, live, preview, onPlan, onClose }: { order: Order; live: boolean; preview:boolean; onPlan: () => void; onClose: () => void }) {
+  const pct = Math.round(order.completed / order.quantity * 100)
+  const remaining = Math.max(0, order.quantity - order.completed)
+  const requiredRate = order.workdaysLeft > 0 ? Math.ceil(remaining / order.workdaysLeft) : 0
+  return <div className="drawer-backdrop" onClick={onClose}><aside className="order-drawer" onClick={e => e.stopPropagation()}><div className="drawer-top"><span className="eyebrow">ORDER DETAIL</span><button className="icon-button" onClick={onClose} aria-label="Close details"><X size={19} /></button></div><div className="drawer-title"><span className="order-code">{order.po}</span><RiskBadge risk={order.status} /><h2>{order.style}</h2><p>{order.buyer} <i /> {order.colour}</p></div><div className="drawer-summary"><div><span>Order quantity</span><b>{moneyless(order.quantity)} pcs</b></div><div><span>Ex-factory</span><b>{new Date(`${order.shipDate}T00:00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'long' })}</b></div><div><span>Production unit</span><b>{order.unit}</b></div><div><span>Current stage</span><b><span className="stage-dot" /> {order.stage}</b></div></div><section className="drawer-section"><div className="drawer-section-heading"><h3>Production progress</h3><span>{pct}% complete</span></div><div className="progress-track drawer-progress"><i style={{ width: `${pct}%` }} /></div><div className="progress-numbers"><span>{moneyless(order.completed)} completed</span><span>{moneyless(remaining)} remaining</span></div></section><section className="drawer-section risk-explainer"><div className="risk-explainer-head"><span className="risk-explainer-icon"><Activity size={16} /></span><div><b>Production pace</b><span>{order.riskPolicyApproved?'Approved unit risk settings':preview?'Illustrative preview defaults':'No approved unit risk policy'} · working days</span></div></div><div className="pace-grid"><div><span>Recent output</span><b>{moneyless(order.recentDailyOutput)}<small> / day</small></b></div><div><span>Needed to target</span><b>{moneyless(requiredRate)}<small> / day</small></b></div><div><span>Working days left</span><b>{order.workdaysLeft}</b></div></div><div className={`risk-reason risk-reason-${order.status}`}>{order.status === 'insufficient' ? 'Insufficient production history or approved risk settings to calculate a reliable pace.' : requiredRate > order.recentDailyOutput ? `Required pace is ${Math.round(requiredRate / order.recentDailyOutput * 100)}% of recent output. Review the production plan.` : 'Recent pace currently meets the approved required daily output.'}</div><small className="threshold-note">The calculation uses the configured stage target, recent working-day output and days to its milestone.</small></section><section className="drawer-section"><h3>Latest update</h3><div className="latest-update"><span className="latest-update-icon"><Clock3 size={15} /></span><div><b>{order.updatedAt}</b><span>{order.blocked&&<b className="blocked-inline">Production blocked · </b>}{order.issue || 'No reported issue'}</span></div></div></section><section className="drawer-section milestone-section"><div className="drawer-section-heading"><h3>Upcoming milestones</h3><button className="text-button">View plan</button></div>{order.milestones?.length?order.milestones.map((milestone,index)=><Milestone key={index} name={milestone.name} date={new Date(`${milestone.date}T00:00:00`).toLocaleDateString('en-IN',{day:'numeric',month:'short'})} state={milestone.status==='complete'?'done':milestone.status==='in_progress'?'current':'next'}/>):<p className="buyer-empty-note">No milestones have been added to this order.</p>}</section><div className="drawer-footer"><button className="button button-secondary" onClick={onClose}>Close</button>{order.state==='draft'&&<button className="button button-primary" onClick={onPlan} disabled={!live}>Plan and release</button>}</div></aside></div>
+}
+
+function BuyerOrderDrawer({ order, onClose }: { order: Order; onClose: () => void }) {
+  const [photos, setPhotos] = useState<{url:string;capturedAt:string}[]>([])
+  const [photoState, setPhotoState] = useState<'loading'|'ready'|'unavailable'>('loading')
+  useEffect(() => {
+    if (!supabase) { setPhotoState('unavailable'); return }
+    let active = true
+    void (async () => {
+      try {
+        const { data, error } = await supabase.rpc('get_buyer_approved_photo_paths', { target_order: order.id })
+        if (error) throw error
+        const rows = (data ?? []) as {storage_path:string;captured_at:string}[]
+        const result: {url:string;capturedAt:string}[] = []
+        for (const item of rows) {
+          const signed = await invokeProtectedFunction<{url:string}>('approved-buyer-media', { orderId: order.id, path: item.storage_path })
+          result.push({ url: signed.url, capturedAt: item.captured_at })
+        }
+        if (active) { setPhotos(result); setPhotoState('ready') }
+      } catch { if (active) setPhotoState('unavailable') }
+    })()
+    return () => { active = false }
+  }, [order.id])
+  const pct = order.quantity > 0 ? Math.min(100, Math.round(order.completed / order.quantity * 100)) : 0
+  return <div className="drawer-backdrop" onClick={onClose}><aside className="order-drawer buyer-drawer" onClick={e => e.stopPropagation()}><div className="drawer-top"><span className="eyebrow">YOUR ORDER</span><button className="icon-button" onClick={onClose} aria-label="Close details"><X size={19} /></button></div><div className="drawer-title"><span className="order-code">{order.po}</span><BuyerStatusBadge state={order.state} hasProgress={order.completed>0}/><h2>{order.style}</h2><p>{order.colour} · Ex-factory {new Date(`${order.shipDate}T00:00:00`).toLocaleDateString('en-IN',{day:'numeric',month:'long',year:'numeric'})}</p></div><section className="drawer-section"><div className="drawer-section-heading"><h3>Production progress</h3><span>{pct}% complete</span></div><div className="progress-track drawer-progress"><i style={{width:`${pct}%`}}/></div><div className="progress-numbers"><span>{moneyless(order.completed)} reported</span><span>{moneyless(Math.max(0,order.quantity-order.completed))} remaining</span></div></section><section className="drawer-section"><div className="drawer-section-heading"><h3>Milestones</h3><span>Schedule shared by your team</span></div>{order.milestones?.length ? order.milestones.map((milestone,index)=><Milestone key={`${milestone.name}-${index}`} name={milestone.name} date={new Date(`${milestone.date}T00:00:00`).toLocaleDateString('en-IN',{day:'numeric',month:'short'})} state={milestone.status==='complete'?'done':milestone.status==='in_progress'?'current':'next'}/>) : <p className="buyer-empty-note">Milestones will appear here once shared by your production team.</p>}</section>{Boolean(order.buyerSafeRemarks?.length)&&<section className="drawer-section"><div className="drawer-section-heading"><h3>Updates from your team</h3></div><div className="buyer-remarks">{order.buyerSafeRemarks?.map((remark,index)=><div key={index}><span>{remark.text}</span><small>{new Date(`${remark.date}T00:00:00`).toLocaleDateString('en-IN',{day:'numeric',month:'short'})}</small></div>)}</div></section>}<section className="drawer-section"><div className="drawer-section-heading"><h3>Production photos</h3><span>Approved for your account</span></div>{photos.length ? <div className="approved-photos">{photos.map((photo,index)=><figure key={index}><img src={photo.url} alt="Approved production update"/><figcaption>Production update · {new Date(photo.capturedAt).toLocaleDateString('en-IN',{day:'numeric',month:'short'})}</figcaption></figure>)}</div> : <div className="buyer-photo-empty"><ImagePlus size={17}/><span>{photoState==='loading'?'Loading approved photos…':photoState==='unavailable'&&supabase?'Approved photos could not be loaded right now.':'No approved production photos have been shared yet.'}</span></div>}</section><div className="buyer-detail-foot"><ShieldCheck size={14}/> This view contains information approved for your buyer account.</div></aside></div>
+}
+
+function Milestone({ name, date, state }: { name: string; date: string; state: 'done' | 'current' | 'next' }) {
+  return <div className={`milestone milestone-${state}`}><span className="milestone-mark">{state === 'done' ? <Check size={12} /> : <i />}</span><span className="milestone-name">{name}{state === 'current' && <small>In progress</small>}</span><b>{date}</b></div>
+}
+
+type OrderDraftSubmission = {
+  order: Order; buyerId?: string; unitId?: string; statedTotal: number | null
+  mismatchAcknowledged: boolean; sizes: { size_label: string; quantity: number }[]
+}
+
+function OrderModal({ live, onClose, onSave }: { live: boolean; onClose: () => void; onSave: (submission: OrderDraftSubmission) => Promise<void> }) {
+  const [po, setPo] = useState('')
+  const [buyer, setBuyer] = useState('')
+  const [buyerId, setBuyerId] = useState('')
+  const [unit, setUnit] = useState('')
+  const [unitId, setUnitId] = useState('')
+  const [buyerOptions, setBuyerOptions] = useState<{id:string;name:string}[]>([])
+  const [unitOptions, setUnitOptions] = useState<{id:string;name:string}[]>([])
+  const [style, setStyle] = useState('')
+  const [colour, setColour] = useState('')
+  const [shipDate, setShipDate] = useState('')
+  const [sizes, setSizes] = useState([{ size: '', quantity: '' }])
+  const [statedTotal, setStatedTotal] = useState('')
+  const [mismatchAcknowledged, setMismatchAcknowledged] = useState(false)
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [loadingOptions, setLoadingOptions] = useState(live)
+  useEffect(() => {
+    if (!live || !supabase) return
+    let active = true
+    void Promise.all([
+      supabase.from('buyers').select('id,name').eq('active', true).order('name'),
+      supabase.from('production_units').select('id,name').eq('active', true).order('name')
+    ]).then(([buyersResult, unitsResult]) => {
+      if (!active) return
+      if (buyersResult.error || unitsResult.error) { setError('Could not load buyer and unit options. Check your workspace access.'); return }
+      const buyers = buyersResult.data ?? []; const units = unitsResult.data ?? []
+      setBuyerOptions(buyers); setUnitOptions(units)
+      if (buyers[0]) { setBuyer(buyers[0].name); setBuyerId(buyers[0].id) }
+      if (units[0]) { setUnit(units[0].name); setUnitId(units[0].id) }
+      setLoadingOptions(false)
+    }).catch(() => { if (active) setError('Could not load workspace options.') })
+    return () => { active = false }
+  }, [live])
+  const total = sizes.reduce((sum, row) => sum + (row.quantity === '' ? 0 : Number(row.quantity)), 0)
+  const stated = statedTotal.trim() === '' ? null : Number(statedTotal)
+  const mismatch = stated !== null && stated !== total
+
+  async function submit(e: FormEvent) {
+    e.preventDefault(); setError('')
+    const filled = sizes.filter(row => row.size.trim() || row.quantity.trim())
+    if (!po.trim() || !buyer || !unit || !style.trim() || !colour.trim() || !shipDate || !filled.length) { setError('Add the buyer, unit, PO, style, colour, ship date and at least one size quantity.'); return }
+    if (filled.some(row => !row.size.trim() || !/^\d+$/.test(row.quantity))) { setError('Each size needs a label and a whole-number quantity of zero or more.'); return }
+    if (new Set(filled.map(row => row.size.trim().toLowerCase())).size !== filled.length) { setError('Each size label must be unique.'); return }
+    if (!Number.isInteger(total) || total < 1) { setError('The calculated size total must be at least one piece.'); return }
+    if (stated !== null && (!Number.isInteger(stated) || stated < 0)) { setError('The PO stated total must be a non-negative whole number.'); return }
+    if (mismatch && !mismatchAcknowledged) { setError('Review the PO total mismatch and acknowledge it before saving.'); return }
+    if (!live && previewOrders.some(order => order.po.toLowerCase() === po.trim().toLowerCase() && order.buyer === buyer)) { setError('This buyer already has an order with that PO number.'); return }
+    const order: Order = { id: crypto.randomUUID(), po: po.trim(), buyer, unit, style: style.trim(), colour: colour.trim(), quantity: total, completed: 0, stage: 'Draft', shipDate, updatedAt: '—', recentDailyOutput: 0, workdaysLeft: 0, status: 'insufficient', freshness: 'No update', state: 'draft' }
+    setSaving(true)
+    try { await onSave({ order, buyerId: buyerId || undefined, unitId: unitId || undefined, statedTotal: stated, mismatchAcknowledged, sizes: filled.map(row => ({ size_label: row.size.trim(), quantity: Number(row.quantity) })) }) }
+    catch (saveError) { setError(saveError instanceof Error ? saveError.message : 'Could not save this order.'); setSaving(false) }
+  }
+
+  return <ModalFrame title="Create an order" eyebrow="ORDER SETUP · DRAFT" onClose={onClose}><form onSubmit={e => void submit(e)}><p className="modal-intro">Add the PO details and size mix. You’ll set the production route and TNA dates before release.</p><div className="form-grid"><label className="form-label">Buyer account{live ? <select value={buyerId} disabled={loadingOptions} onChange={e => { const item = buyerOptions.find(row => row.id === e.target.value); setBuyerId(e.target.value); setBuyer(item?.name ?? '') }}><option value="">Select buyer</option>{buyerOptions.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select> : <select value={buyer} onChange={e => setBuyer(e.target.value)}><option value="">Select buyer</option>{previewOrders.map(order => order.buyer).filter((name,index,all)=>all.indexOf(name)===index).map(name=><option key={name}>{name}</option>)}</select>}</label><label className="form-label">Production unit{live ? <select value={unitId} disabled={loadingOptions} onChange={e => { const item = unitOptions.find(row => row.id === e.target.value); setUnitId(e.target.value); setUnit(item?.name ?? '') }}><option value="">Select unit</option>{unitOptions.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select> : <select value={unit} onChange={e => setUnit(e.target.value)}><option value="">Select unit</option><option>Unit 01 · Avinashi</option><option>Unit 02 · Tiruppur</option><option>Unit 03 · Palladam</option></select>}</label><label className="form-label">PO number<input value={po} onChange={e => setPo(e.target.value)} placeholder="e.g. PO-2510" /></label><label className="form-label">Garment style<input value={style} onChange={e => setStyle(e.target.value)} placeholder="Style name or code" /></label><label className="form-label">Colour / colourway<input value={colour} onChange={e => setColour(e.target.value)} placeholder="Colour name or code" /></label><label className="form-label">Ex-factory date<input type="date" value={shipDate} onChange={e => setShipDate(e.target.value)} /></label></div><div className="size-matrix"><div className="size-matrix-head"><b>Size breakdown</b><span>Total is calculated from size quantities</span></div><div className="size-entry-list">{sizes.map((row,index)=><div className="size-entry" key={index}><input aria-label={`Size ${index+1} label`} value={row.size} onChange={e => setSizes(current => current.map((item,i)=>i===index?{...item,size:e.target.value}:item))} placeholder="Size label" /><input aria-label={`Size ${index+1} quantity`} type="number" min="0" step="1" inputMode="numeric" value={row.quantity} onChange={e => setSizes(current => current.map((item,i)=>i===index?{...item,quantity:e.target.value}:item))} placeholder="Qty" />{sizes.length>1&&<button type="button" className="remove-size" aria-label="Remove size" onClick={()=>setSizes(current=>current.filter((_,i)=>i!==index))}><X size={14}/></button>}</div>)}</div><button type="button" className="add-size" onClick={()=>setSizes(current=>[...current,{size:'',quantity:''}])}><Plus size={13}/> Add size</button><div className="size-total"><span>Calculated size total</span><b>{moneyless(total)} <small>pieces</small></b></div><label className="form-label stated-total">PO stated total <span className="optional-label">Optional</span><input type="number" min="0" step="1" value={statedTotal} onChange={e=>{setStatedTotal(e.target.value);setMismatchAcknowledged(false)}} placeholder="Enter only if shown on the PO"/></label>{mismatch&&<label className="mismatch-ack"><input type="checkbox" checked={mismatchAcknowledged} onChange={e=>setMismatchAcknowledged(e.target.checked)}/> <span>PO states {moneyless(stated!)} pieces, but the size total is {moneyless(total)}. I’ve checked and acknowledge this mismatch.</span></label>}</div>{error&&<div className="form-error"><TriangleAlert size={15}/>{error}</div>}<div className="modal-actions"><button type="button" className="button button-secondary" onClick={onClose}>Cancel</button><button className="button button-primary" type="submit" disabled={saving||loadingOptions}>{saving?'Saving…':'Save draft'} <ArrowRight size={15}/></button></div></form></ModalFrame>
+}
+
+function UpdateModal({ orders, previewOnly, onClose, onSave }: { orders: Order[]; previewOnly: boolean; onClose: () => void; onSave: (record: PendingUpdate, photo?: Blob, audio?: Blob) => Promise<void> }) {
+  const [orderId, setOrderId] = useState(orders[0]?.id ?? '')
+  const [stageId, setStageId] = useState(orders[0]?.stageOptions?.[0]?.id ?? `${orders[0]?.id}-stage`)
+  const [lineId, setLineId] = useState(orders[0]?.stageOptions?.[0]?.lines[0]?.id ?? `${orders[0]?.id}-line`)
+  const [quantity, setQuantity] = useState('')
+  const [issue, setIssue] = useState('')
+  const [zeroReason, setZeroReason] = useState('')
+  const [blocked,setBlocked]=useState(false)
+  const [photo, setPhoto] = useState<File | undefined>()
+  const [audio, setAudio] = useState<Blob | undefined>()
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const selectedOrder = orders.find(order => order.id === orderId) ?? orders[0]
+  const stageOptions = selectedOrder.stageOptions?.length ? selectedOrder.stageOptions : [{ id: `${selectedOrder.id}-stage`, name: selectedOrder.stage, sequence: 1, targetQuantity: selectedOrder.quantity, lines: [{ id: `${selectedOrder.id}-line`, name: 'Line A' }, { id: `${selectedOrder.id}-line-b`, name: 'Line B' }] }]
+  const selectedStage = stageOptions.find(stageOption => stageOption.id === stageId) ?? stageOptions[0]
+  const lineOptions = selectedStage?.lines ?? []
+  const selectedLine = lineOptions.find(option => option.id === lineId) ?? lineOptions[0]
+  async function submit(e: FormEvent) {
+    e.preventDefault()
+    if (quantity === '' || !Number.isInteger(Number(quantity)) || Number(quantity) < 0) { setError('Enter a whole-number quantity, including 0 if there was no output.'); return }
+    if (Number(quantity) === 0 && !zeroReason.trim()) { setError('Add a short reason for zero output.'); return }
+    if (blocked && !issue.trim() && !audio) { setError('Add a short note or voice note explaining what is blocking this stage.'); return }
+    if (!photo) { setError('Add a supporting photo, or contact your workspace administrator about the approved exception policy.'); return }
+    setSaving(true); setError('')
+    const record: PendingUpdate = { clientId: crypto.randomUUID(), previewOnly, orderId, stageId: selectedStage.id, stage: selectedStage.name, lineId: selectedLine?.id, line: selectedLine?.name ?? 'Stage total', reportingDate: localDate(), quantity: Number(quantity), zeroReason, blocked, issue, createdAt: new Date().toISOString(), syncState: 'waiting to sync' }
+    try { await onSave(record, photo, audio); } catch { setError('Could not save this update locally. Keep this screen open and try again.'); setSaving(false) }
+  }
+  return <ModalFrame title="Add production update" eyebrow="DAILY PRODUCTION · TODAY" onClose={onClose}><form onSubmit={submit}><p className="modal-intro">Record the output for this reporting period. Threadline adds it to the cumulative total automatically.</p><label className="form-label">Assigned order<select value={orderId} onChange={e => { const next = orders.find(order => order.id === e.target.value); setOrderId(e.target.value); setStageId(next?.stageOptions?.[0]?.id ?? `${next?.id}-stage`); setLineId(next?.stageOptions?.[0]?.lines[0]?.id ?? `${next?.id}-line`) }}>{orders.map(o => <option key={o.id} value={o.id}>{o.po} · {o.style}</option>)}</select></label><div className="form-grid"><label className="form-label">Production stage<select value={selectedStage?.id} onChange={e => { setStageId(e.target.value); const stageOption = stageOptions.find(option => option.id === e.target.value); setLineId(stageOption?.lines[0]?.id ?? '') }}>{stageOptions.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}</select></label><label className="form-label">Production line<select value={selectedLine?.id ?? ''} onChange={e => setLineId(e.target.value)}><option value="">Stage total</option>{lineOptions.map(option => <option key={option.id} value={option.id}>{option.name}</option>)}</select></label></div><label className="form-label quantity-label">Pieces completed today<div className="quantity-input-wrap"><input autoFocus type="number" min="0" step="1" inputMode="numeric" value={quantity} onChange={e => setQuantity(e.target.value)} placeholder="0" /><span>pieces</span></div><small>Enter today’s output, not the running total.</small></label>{quantity === '0' && <label className="form-label">Reason for zero output<input value={zeroReason} onChange={e => setZeroReason(e.target.value)} placeholder="e.g. Machine maintenance" /></label>}<label className="blocked-toggle"><input type="checkbox" checked={blocked} onChange={e=>setBlocked(e.target.checked)}/><span><b>Production is blocked</b><small>Use this when the stage cannot continue; it is separate from an ordinary issue note.</small></span></label><label className="form-label">Issue note <span className="optional-label">Optional</span><textarea value={issue} onChange={e => setIssue(e.target.value)} placeholder="Anything blocking production? Type a short note…" rows={3} /></label><VoiceNoteCapture onRecorded={setAudio} /><label className="photo-drop"><input type="file" accept="image/*" capture="environment" onChange={e => setPhoto(e.target.files?.[0])} /><span className="photo-drop-icon"><ImagePlus size={19} /></span><b>{photo ? photo.name : 'Add a production photo'}</b><small>{photo ? 'Photo will be saved with this update' : 'Tap to take a photo or choose from this device'}</small></label><div className="local-save-note"><LockKeyhole size={14} /> Saved on this device first, then synced when online.</div>{error && <div className="form-error"><TriangleAlert size={15} />{error}</div>}<div className="modal-actions"><button type="button" className="button button-secondary" onClick={onClose}>Cancel</button><button className="button button-primary button-large" type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save production update'} <ArrowRight size={15} /></button></div></form></ModalFrame>
+}
+
+function localDate() {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date())
+  return `${parts.find(p => p.type === 'year')?.value}-${parts.find(p => p.type === 'month')?.value}-${parts.find(p => p.type === 'day')?.value}`
+}
+
+function VoiceNoteCapture({ onRecorded }: { onRecorded: (audio?: Blob) => void }) {
+  const [recording, setRecording] = useState(false)
+  const [duration, setDuration] = useState(0)
+  const [failure, setFailure] = useState('')
+  const recorder = useRef<MediaRecorder | null>(null)
+  const stream = useRef<MediaStream | null>(null)
+  const chunks = useRef<BlobPart[]>([])
+  const timer = useRef<number | null>(null)
+  useEffect(() => () => {
+    if (timer.current) window.clearInterval(timer.current)
+    stream.current?.getTracks().forEach(track => track.stop())
+  }, [])
+  async function toggle() {
+    setFailure('')
+    if (recording) { recorder.current?.stop(); return }
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { setFailure('Voice recording is not supported here. You can type the issue note.'); return }
+    try {
+      stream.current = await navigator.mediaDevices.getUserMedia({ audio: true })
+      chunks.current = []
+      recorder.current = new MediaRecorder(stream.current)
+      recorder.current.ondataavailable = event => { if (event.data.size > 0) chunks.current.push(event.data) }
+      recorder.current.onstop = () => {
+        onRecorded(new Blob(chunks.current, { type: recorder.current?.mimeType || 'audio/webm' }))
+        stream.current?.getTracks().forEach(track => track.stop())
+        stream.current = null
+        setRecording(false)
+        if (timer.current) window.clearInterval(timer.current)
+        timer.current = null
+      }
+      recorder.current.start(); setRecording(true); setDuration(0)
+      timer.current = window.setInterval(() => setDuration(value => value + 1), 1000)
+    } catch { setFailure('Microphone access failed. Check device permission or type the issue note instead.') }
+  }
+  return <div className="voice-note"><button type="button" className={`voice-record ${recording ? 'recording' : ''}`} onClick={() => void toggle()}>{recording ? <span className="recording-square" /> : <AudioLines size={16} />}{recording ? `Stop · ${Math.floor(duration / 60)}:${String(duration % 60).padStart(2, '0')}` : 'Record voice note'}</button><span>{recording ? 'Recording original audio' : 'Original audio is kept for review'}</span>{failure && <small className="voice-error">{failure}</small>}</div>
+}
+
+function ModalFrame({ title, eyebrow, children, onClose }: { title: string; eyebrow: string; children: ReactNode; onClose: () => void }) {
+  return <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}><section className="modal-card" role="dialog" aria-modal="true" aria-label={title}><div className="modal-heading"><div><span className="eyebrow">{eyebrow}</span><h2>{title}</h2></div><button className="icon-button" onClick={onClose} aria-label="Close"><X size={19} /></button></div>{children}</section></div>
+}
+
+export default App
