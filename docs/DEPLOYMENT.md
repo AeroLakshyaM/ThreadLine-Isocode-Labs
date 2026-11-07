@@ -4,7 +4,7 @@
 
 - Supabase project URL and public anon key for the browser.
 - Supabase Auth user records and matching `profiles` rows. Create the first admin profile using trusted SQL/dashboard access.
-- Edge Function secrets: `APP_ORIGIN`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
+- Edge Function secrets: `APP_ORIGIN=https://threadline-ruddy.vercel.app`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`. `APP_ORIGIN` must be the website origin only (scheme + host, no path or trailing slash); the functions use the ThreadLine production origin as a fallback.
 - Optional AI secrets after customer consent: `NVIDIA_API_KEY` and `GEMINI_API_KEY`. Defaults: `NVIDIA_MODEL=nvidia/nemotron-3-ultra-550b-a55b` for first-choice issue translation/category suggestions; `GEMINI_MODEL=gemini-3-flash-preview` for fallback suggestions; and `GEMINI_TRANSCRIBE_MODEL=gemini-3-flash-preview` for human-triggered audio transcription. Model names are configurable as Edge Function secrets. See NVIDIA's [Nemotron 3 Ultra model page](https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b) and Google's [Gemini 3 Flash Preview model page](https://ai.google.dev/gemini-api/docs/models/gemini-3-flash-preview).
 - Static web hosting with HTTPS, SPA route fallback and a domain matching `APP_ORIGIN`.
 

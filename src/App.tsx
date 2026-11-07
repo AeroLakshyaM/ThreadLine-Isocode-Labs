@@ -141,7 +141,7 @@ function App() {
   function notify(message: string) { setToast(message) }
 
   return <div className="app-shell">
-    <aside className={`sidebar ${menuOpen ? 'sidebar-open' : ''}`}>
+    <aside id="threadline-navigation" className={`sidebar ${menuOpen ? 'sidebar-open' : ''}`}>
       <div className="brand"><div className="brand-mark"><span /></div><span>threadline</span><button className="icon-button mobile-close" aria-label="Close menu" onClick={() => setMenuOpen(false)}><X size={18} /></button></div>
       <div className="workspace-switch"><div className="workspace-avatar">TL</div><div className="workspace-label"><b>Threadline workspace</b><span>Production operations</span></div><ChevronDown size={15} /></div>
       <div className="nav-caption">WORKSPACE</div>
@@ -168,10 +168,11 @@ function App() {
       {role !== 'buyer' && <div className="sidebar-health"><div className="health-icon"><ShieldCheck size={16} /></div><div><b>{authMode==='preview'?'Preview mode':'Workspace'}</b><span>{authMode==='preview'?'Sample records only':online?'Connected':'Offline · local queue'}</span></div><span className="health-dot" /></div>}
       <div className="profile-row"><div className="profile-avatar">{(profileName||buyerAccount||roleLabels[role]).slice(0,2).toUpperCase()}</div><div className="profile-meta"><b>{authMode==='preview'?`Preview ${roleLabels[role]}`:profileName||buyerAccount}</b><span>{roleLabels[role]}</span></div><button className="icon-button" aria-label="Account menu" onClick={() => notify(authMode==='preview'?'Sign in to manage your account.':'Account settings are managed by your workspace administrator.')}><MoreHorizontal size={18} /></button></div>
     </aside>
+    <button className={`sidebar-backdrop ${menuOpen ? 'is-visible' : ''}`} type="button" aria-label="Close navigation menu" tabIndex={menuOpen ? 0 : -1} onClick={() => setMenuOpen(false)} />
 
     <main className="main-area">
       <header className="topbar">
-        <button className="icon-button mobile-menu" aria-label="Open menu" onClick={() => setMenuOpen(true)}><Menu size={20} /></button>
+      <button className="icon-button mobile-menu" aria-label="Open menu" aria-controls="threadline-navigation" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}><Menu size={20} /></button>
         <div className="breadcrumb">Workspace <ChevronRight size={14} /> <b>{pageTitle(page, role)}</b></div>
         <div className="topbar-actions">
           <span className={`connection-pill ${online ? 'is-online' : 'is-offline'}`}><span />{online ? 'Online' : 'Offline'}{pendingCount > 0 && <b>{pendingCount} pending</b>}</span>
@@ -600,12 +601,12 @@ function UserManagementPage({live,notify}:{live:boolean;notify:(message:string)=
     {live&&<div className="config-forms user-management-layout">
       <section className="panel-card config-card"><div className="panel-heading"><div><h3>{editingId?'Edit workspace user':'Create a user'}</h3><span>{editingId?'Change this user’s role, buyer access, or active status.':'Create the login and ThreadLine profile together.'}</span></div></div>
         <form onSubmit={event=>void submit(event)}>
-          <label className="form-label">Full name<input required maxLength={120} value={displayName} onChange={event=>setDisplayName(event.target.value)} placeholder="Name shown in ThreadLine"/></label>
-          <label className="form-label">Email address<input required type="email" value={email} onChange={event=>setEmail(event.target.value)} placeholder="person@company.com"/></label>
-          <label className="form-label">Workspace role<select value={role} onChange={event=>setRole(event.target.value as Role)}><option value="admin">Administrator</option><option value="merchandiser">Merchandiser</option><option value="supervisor">Factory supervisor</option><option value="buyer">Buyer</option></select></label>
-          {role==='buyer'&&<label className="form-label">Buyer account<select required value={buyerId} onChange={event=>setBuyerId(event.target.value)}><option value="">Select buyer</option>{buyers.filter(buyer=>buyer.active).map(buyer=><option key={buyer.id} value={buyer.id}>{buyer.name}</option>)}</select><small>Buyer users can see only orders shared with this account.</small></label>}
-          <label className="form-label">{editingId?'Reset password (optional)':'Temporary password'}<input required={!editingId} minLength={8} type="password" autoComplete="new-password" value={password} onChange={event=>setPassword(event.target.value)} placeholder={editingId?'Leave blank to keep current password':'At least 8 characters'}/></label>
-          {editingId&&<label className="mismatch-ack"><input type="checkbox" checked={active} onChange={event=>setActive(event.target.checked)}/><span>Account is active</span></label>}
+          <label className="form-label">Full name<input id="managed-user-name" name="displayName" required maxLength={120} value={displayName} onChange={event=>setDisplayName(event.target.value)} placeholder="Name shown in ThreadLine"/></label>
+          <label className="form-label">Email address<input id="managed-user-email" name="email" required type="email" value={email} onChange={event=>setEmail(event.target.value)} placeholder="person@company.com"/></label>
+          <label className="form-label">Workspace role<select id="managed-user-role" name="role" value={role} onChange={event=>setRole(event.target.value as Role)}><option value="admin">Administrator</option><option value="merchandiser">Merchandiser</option><option value="supervisor">Factory supervisor</option><option value="buyer">Buyer</option></select></label>
+          {role==='buyer'&&<label className="form-label">Buyer account<select id="managed-user-buyer" name="buyerId" required value={buyerId} onChange={event=>setBuyerId(event.target.value)}><option value="">Select buyer</option>{buyers.filter(buyer=>buyer.active).map(buyer=><option key={buyer.id} value={buyer.id}>{buyer.name}</option>)}</select><small>Buyer users can see only orders shared with this account.</small></label>}
+          <label className="form-label">{editingId?'Reset password (optional)':'Temporary password'}<input id="managed-user-password" name="password" required={!editingId} minLength={8} type="password" autoComplete="new-password" value={password} onChange={event=>setPassword(event.target.value)} placeholder={editingId?'Leave blank to keep current password':'At least 8 characters'}/></label>
+          {editingId&&<label className="mismatch-ack"><input id="managed-user-active" name="active" type="checkbox" checked={active} onChange={event=>setActive(event.target.checked)}/><span>Account is active</span></label>}
           <div className="user-form-note"><ShieldCheck size={15}/><span>Share temporary passwords securely. Administrators cannot see existing passwords.</span></div>
           <div className="user-form-actions"><button className="button button-primary" disabled={saving}>{saving?'Saving…':editingId?'Save changes':'Create account'}</button>{editingId&&<button type="button" className="button button-secondary" onClick={clearForm} disabled={saving}>Cancel</button>}</div>
         </form>

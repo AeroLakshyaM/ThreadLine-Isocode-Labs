@@ -1,7 +1,11 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
+const configuredOrigin = Deno.env.get('APP_ORIGIN')?.trim()
+const appOrigin = configuredOrigin && configuredOrigin !== 'null'
+  ? configuredOrigin.replace(/\/+$/, '')
+  : 'https://threadline-ruddy.vercel.app'
 const cors = {
-  'Access-Control-Allow-Origin': Deno.env.get('APP_ORIGIN') ?? 'null',
+  'Access-Control-Allow-Origin': appOrigin,
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS'
 }
