@@ -9,7 +9,7 @@
 5. Green/amber/red thresholds, recent-output window, stale-update threshold, and authorised approver. No production risk policy is seeded.
 6. Supervisor assignment rules, whether multiple submitters are allowed, and the roles allowed to release a PO.
 7. Photo approval owner, retention period, buyer display rules and export handling.
-8. Tamil audio consent, approved AI providers, data-use terms, target recording devices, expected languages and acceptable transcription quality. No representative factory recordings have been evaluated. Gemini's free tier may use submitted content to improve products; obtain explicit customer approval or use an approved paid/alternative processing path before sending sensitive recordings.
+8. Tamil audio consent, approved AI providers, data-use terms, target recording devices, expected languages and acceptable transcription quality. No representative factory recordings have been evaluated. Current proposed models are Nemotron 3 Ultra (`nvidia/nemotron-3-ultra-550b-a55b`) for issue suggestions, with Gemini 3 Flash Preview (`gemini-3-flash-preview`) as fallback and for human-triggered transcription. Gemini's free tier may use submitted content to improve products; obtain explicit customer approval or use an approved paid/alternative processing path before sending sensitive recordings.
 9. Whether AI providers may process identifiable customer/order details; whether text/audio must be redacted first.
 10. Buyer report branding, week boundaries, language, inclusion of approved photos, remarks, and secure archive/retention expectations.
 11. Hosting region, backup retention, disaster recovery target, user provisioning policy and account recovery process.

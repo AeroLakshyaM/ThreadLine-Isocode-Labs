@@ -24,8 +24,8 @@ Threadline uses Supabase PostgREST, Auth, Storage and Edge Functions. The browse
 
 All functions accept POST and an authenticated Supabase JWT. Configure `APP_ORIGIN` to the exact browser origin.
 
-- `issue-assist`: `{ transcript, sourceLanguage?, targetLanguage? }` → `{ translation, category, provider, needsHumanReview }`. Calls Nemotron first, then Gemini if configured and the first call fails. Returns 503 without a provider key; never changes operational records.
-- `transcribe-issue`: `{ updateId }` → `{ transcript, language, provider, needsHumanReview }`. Checks reviewer role, retrieves original audio from private storage and asks Gemini for a verbatim transcript. Original audio is not overwritten.
+- `issue-assist`: `{ transcript, sourceLanguage?, targetLanguage? }` → `{ translation, category, provider, needsHumanReview }`. Calls Nemotron 3 Ultra (`nvidia/nemotron-3-ultra-550b-a55b`) first, then Gemini 3 Flash Preview (`gemini-3-flash-preview`) if configured and the first call fails. Model IDs can be overridden with `NVIDIA_MODEL` and `GEMINI_MODEL` Edge Function secrets. Returns 503 without a provider key; never changes operational records.
+- `transcribe-issue`: `{ updateId }` → `{ transcript, language, provider, needsHumanReview }`. Checks reviewer role, retrieves original audio from private storage and asks Gemini 3 Flash Preview (`gemini-3-flash-preview`) for a verbatim transcript. The `GEMINI_TRANSCRIBE_MODEL` Edge Function secret can override the model. Original audio is not overwritten.
 - `approved-buyer-media`: `{ orderId, path }` → `{ url, expiresInSeconds }`. Buyer role, buyer ownership, order visibility and explicit photo approval are checked before creating a short-lived signed URL.
 
 ## Offline production update contract

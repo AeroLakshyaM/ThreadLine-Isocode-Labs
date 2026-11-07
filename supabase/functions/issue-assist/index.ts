@@ -52,7 +52,7 @@ Deno.serve(async request => {
   const geminiKey = Deno.env.get('GEMINI_API_KEY')
   if (geminiKey) {
     try {
-      const model = Deno.env.get('GEMINI_MODEL') || 'gemini-2.5-flash-lite'
+      const model = Deno.env.get('GEMINI_MODEL') || 'gemini-3-flash-preview'
       const result = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiKey)}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0.1, responseMimeType: 'application/json' } }),

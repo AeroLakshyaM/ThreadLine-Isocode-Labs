@@ -5,7 +5,7 @@
 - Supabase project URL and public anon key for the browser.
 - Supabase Auth user records and matching `profiles` rows. Create the first admin profile using trusted SQL/dashboard access.
 - Edge Function secrets: `APP_ORIGIN`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
-- Optional AI secrets after customer consent: `NVIDIA_API_KEY`, `GEMINI_API_KEY`. The default text suggestion model is `nvidia/nemotron-3.5-lightning-30b-a3b`; NVIDIA currently lists a free API endpoint and a 1M context window on its [model page](https://build.nvidia.com/nvidia/nemotron-3.5-lightning-30b-a3b). Model names are configurable in Edge Function secrets.
+- Optional AI secrets after customer consent: `NVIDIA_API_KEY` and `GEMINI_API_KEY`. Defaults: `NVIDIA_MODEL=nvidia/nemotron-3-ultra-550b-a55b` for first-choice issue translation/category suggestions; `GEMINI_MODEL=gemini-3-flash-preview` for fallback suggestions; and `GEMINI_TRANSCRIBE_MODEL=gemini-3-flash-preview` for human-triggered audio transcription. Model names are configurable as Edge Function secrets. See NVIDIA's [Nemotron 3 Ultra model page](https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b) and Google's [Gemini 3 Flash Preview model page](https://ai.google.dev/gemini-api/docs/models/gemini-3-flash-preview).
 - Static web hosting with HTTPS, SPA route fallback and a domain matching `APP_ORIGIN`.
 
 ## Release steps
@@ -21,8 +21,8 @@
 
 ## Secrets
 
-`.env.example` contains browser-safe variable names and commented examples. Only `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` belong in the client build. The Supabase service-role key and NVIDIA/Gemini keys must be Edge Function secrets. Rotate any secret that has been exposed in a browser bundle, screenshot, chat or source repository.
+`.env.example` contains browser-safe variable names. Only `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` belong in the client build. The Supabase service-role key and NVIDIA/Gemini keys must be Edge Function secrets. Rotate any secret that has been exposed in a browser bundle, screenshot, chat or source repository.
 
 ## Free-tier and cost note
 
-NVIDIA lists a free endpoint for this Nemotron model. Google documents a Gemini free tier for limited model access, but also says content submitted on the free tier may be used to improve products. Review [NVIDIA's model page](https://build.nvidia.com/nvidia/nemotron-3.5-lightning-30b-a3b) and [Gemini API pricing/data-use terms](https://ai.google.dev/gemini-api/docs/pricing) before enabling AI. Supabase currently lists limited Free-plan quotas and says inactive free projects may pause; see [current Supabase billing limits](https://supabase.com/docs/guides/platform/billing-on-supabase). Free access has quotas and terms; the app is not guaranteed to run at zero cost. Storage, database, egress, hosting, model/API allowances and request limits can change. Do not send sensitive factory recordings to a free-tier provider without customer/factory approval of the data handling.
+NVIDIA offers a free endpoint for [Nemotron 3 Ultra](https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b). Google documents a Gemini free tier for limited model access and states that free-tier content may be used to improve products. Review [Gemini API pricing and data-use terms](https://ai.google.dev/gemini-api/docs/pricing) before enabling AI. Supabase currently lists limited Free-plan quotas and says inactive free projects may pause; see [current Supabase billing limits](https://supabase.com/docs/guides/platform/billing-on-supabase). Free access has quotas and terms; the app is not guaranteed to run at zero cost. Storage, database, egress, hosting, model/API allowances and request limits can change. Do not send sensitive factory data or recordings to a provider without customer/factory approval of the data handling.

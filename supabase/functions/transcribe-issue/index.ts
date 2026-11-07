@@ -30,7 +30,7 @@ Deno.serve(async request => {
   const mimeType = audio.type || 'audio/webm'
   const bytes = new Uint8Array(await audio.arrayBuffer())
   const base64 = encodeBase64(bytes)
-  const model = Deno.env.get('GEMINI_TRANSCRIBE_MODEL') || 'gemini-2.5-flash-lite'
+  const model = Deno.env.get('GEMINI_TRANSCRIBE_MODEL') || 'gemini-3-flash-preview'
   try {
     const result = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiKey)}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
