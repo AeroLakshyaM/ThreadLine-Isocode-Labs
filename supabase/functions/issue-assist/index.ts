@@ -38,7 +38,7 @@ Deno.serve(async request => {
     try {
       const result = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
         method: 'POST', headers: { Authorization: `Bearer ${nvidiaKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: Deno.env.get('NVIDIA_MODEL') || 'nvidia/nemotron-3.5-lightning-30b-a3b', temperature: 0.1, max_tokens: 400, messages: [{ role: 'system', content: 'You translate and classify factory issue notes. Follow the requested JSON format exactly.' }, { role: 'user', content: prompt }] }),
+        body: JSON.stringify({ model: Deno.env.get('NVIDIA_MODEL') || 'nvidia/nemotron-3-ultra-550b-a55b', temperature: 0.1, max_tokens: 400, messages: [{ role: 'system', content: 'You translate and classify factory issue notes. Follow the requested JSON format exactly.' }, { role: 'user', content: prompt }] }),
         signal: AbortSignal.timeout(20000)
       })
       if (!result.ok) throw new Error(`Nemotron returned HTTP ${result.status}`)

@@ -1,7 +1,7 @@
 # Known limitations
 
 - The repository has not been connected to a customer Supabase project. No migration has been applied to a live project and no real user sign-in or buyer isolation test has been run.
-- Admins can create buyers, units and working days, lines, stage/TNA templates, holidays and a unit risk policy in the app. User invitations, buyer-user mapping, buyer/unit deactivation, arbitrary stage editing and calendar editing remain manual or incomplete.
+- Admins can create buyers, units and working days, lines, stage/TNA templates, holidays and a unit risk policy in the app. The User management page creates auth users and profiles, changes roles and active status, resets passwords, updates email, and maps buyer users. Initial first-admin provisioning, project secrets, migrations and Edge Function deployment remain trusted project setup; buyer/unit deactivation, arbitrary stage editing and editing an existing unit calendar remain incomplete.
 - The planning interface selects active templates, dates, production lines and supervisors, but does not yet support free-form stage insertion/reordering or maintaining templates from the app.
 - Photo approval screen is implemented and new uploads create a pending review record. Its nested Supabase query and storage signing require validation against a real project. Photos added before the migration/trigger will need an administrator to create their approval row.
 - Buyer portal signed media and AI functions need deployed Edge Functions and secrets.

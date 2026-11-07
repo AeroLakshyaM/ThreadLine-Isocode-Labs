@@ -15,7 +15,7 @@ import { loadOrders, loadProfile } from './liveData'
 import type { User } from '@supabase/supabase-js'
 import { invokeProtectedFunction } from './supabase'
 
-type Page = 'board' | 'orders' | 'issues' | 'photos' | 'reports' | 'production' | 'sync' | 'buyer' | 'workspace'
+type Page = 'board' | 'orders' | 'issues' | 'photos' | 'reports' | 'production' | 'sync' | 'buyer' | 'workspace' | 'users'
 const roleLabels: Record<Role, string> = { merchandiser: 'Merchandiser', supervisor: 'Factory supervisor', buyer: 'Buyer', admin: 'Administrator' }
 
 function App() {
@@ -159,7 +159,10 @@ function App() {
           <NavItem icon={<Activity size={18} />} label="My issues" active={page === 'issues'} onClick={() => navigate('issues')} />
         </>}
         {role === 'buyer' && <NavItem icon={<ShoppingBag size={18} />} label="My orders" active={page === 'buyer'} onClick={() => navigate('buyer')} />}
-        {role === 'admin' && <NavItem icon={<Settings2 size={18} />} label="Workspace setup" active={page === 'workspace'} onClick={() => navigate('workspace')} />}
+        {role === 'admin' && <>
+          <NavItem icon={<Settings2 size={18} />} label="Workspace setup" active={page === 'workspace'} onClick={() => navigate('workspace')} />
+          <NavItem icon={<Users size={18} />} label="User management" active={page === 'users'} onClick={() => navigate('users')} />
+        </>}
       </nav>
       <div className="sidebar-spacer" />
       {role !== 'buyer' && <div className="sidebar-health"><div className="health-icon"><ShieldCheck size={16} /></div><div><b>{authMode==='preview'?'Preview mode':'Workspace'}</b><span>{authMode==='preview'?'Sample records only':online?'Connected':'Offline · local queue'}</span></div><span className="health-dot" /></div>}
@@ -188,6 +191,7 @@ function App() {
         {page === 'reports' && <ReportsPage orders={filteredOrders} notify={notify} />}
       {page === 'buyer' && <BuyerPage buyerName={buyerAccount} orders={filteredOrders} setSelected={setSelectedOrder} />}
         {page === 'workspace' && <WorkspacePage live={authMode==='signedIn'} notify={notify} />}
+        {page === 'users' && role === 'admin' && <UserManagementPage live={authMode==='signedIn'} notify={notify} />}
       </div>
     </main>
 
@@ -245,6 +249,7 @@ function pageTitle(page: Page, role: Role) {
   if (page === 'photos') return 'Photo approvals'
   if (page === 'reports') return 'Buyer reports'
   if (page === 'buyer') return 'My orders'
+  if (page === 'users') return 'User management'
   return 'Workspace setup'
 }
 
@@ -547,9 +552,71 @@ function WorkspacePage({live,notify}:{live:boolean;notify:(message:string)=>void
     <section className="panel-card config-card"><div className="panel-heading"><div><h3>TNA templates</h3><span>Use one milestone per line: “Name | days from ex-factory”. Negative numbers are before ship date.</span></div></div><form onSubmit={e=>{e.preventDefault();void createTemplate('tna')}}><label className="form-label">Template name<input required value={tnaName} onChange={e=>setTnaName(e.target.value)} placeholder="Customer-approved TNA"/></label><label className="form-label">Production unit<select required value={tnaUnit} onChange={e=>setTnaUnit(e.target.value)}><option value="">Select unit</option>{units.map(unit=><option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label><label className="form-label">Milestones<textarea required rows={5} value={tnaSteps} onChange={e=>setTnaSteps(e.target.value)} placeholder={'Fabric in-house | -30\nCutting start | -20\nPacking complete | -3'}/></label><label className="mismatch-ack"><input type="checkbox" checked={tnaActive} onChange={e=>setTnaActive(e.target.checked)}/><span>Activate only after confirming every milestone and offset with the customer.</span></label><button className="button button-secondary" disabled={busy}>Save TNA template</button></form><TemplateList rows={tnaTemplates} units={units} onToggle={(id,active)=>void save(async()=>{const {error}=await supabase!.from('tna_templates').update({active}).eq('id',id);if(error)throw error})}/></section>
     <section className="panel-card config-card"><div className="panel-heading"><div><h3>Working days and holidays</h3><span>Unit working days are stored on the production unit.</span></div></div><div className="config-record-list">{units.map(unit=><div key={unit.id}><b>{unit.name}</b><span>{unit.working_days.length?unit.working_days.map(d=>weekdays.find(day=>day[1]===d)?.[0]??d).join(', '):'No working calendar configured'}</span></div>)}</div><form onSubmit={e=>{e.preventDefault();void save(async()=>{const {error}=await supabase!.from('unit_holidays').insert({unit_id:holidayUnit,holiday_date:holidayDate,label:holidayLabel.trim()});if(error)throw error});setHolidayLabel('')}}><label className="form-label">Unit<select required value={holidayUnit} onChange={e=>setHolidayUnit(e.target.value)}><option value="">Select unit</option>{units.map(unit=><option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label><label className="form-label">Holiday<input required type="date" value={holidayDate} onChange={e=>setHolidayDate(e.target.value)}/></label><label className="form-label">Reason<input required value={holidayLabel} onChange={e=>setHolidayLabel(e.target.value)} placeholder="Holiday label"/></label><button className="button button-secondary" disabled={busy||!units.length}>Add holiday</button></form></section>
     <section className="panel-card config-card"><div className="panel-heading"><div><h3>Production risk policy</h3><span>Set thresholds only after company approval. Empty fields mean no policy is active.</span></div></div><form onSubmit={e=>{e.preventDefault();if(!approveRisk){notify('Only save thresholds after the authorised company approver confirms them.');return}void save(async()=>{const {error}=await supabase!.from('risk_configuration').upsert({unit_id:riskUnit,config_name:'Approved unit policy',recent_workdays:Number(recentDays),amber_required_rate_ratio:Number(amberRatio),red_required_rate_ratio:Number(redRatio),stale_after_hours:Number(staleHours),provisional:!approveRisk,approved_by:approveRisk?(await supabase!.auth.getUser()).data.user?.id:null,approved_at:approveRisk?new Date().toISOString():null},{onConflict:'unit_id'});if(error)throw error});setAmberRatio('');setRedRatio('');setApproveRisk(false)}}><label className="form-label">Production unit<select required value={riskUnit} onChange={e=>setRiskUnit(e.target.value)}><option value="">Select unit</option>{units.map(unit=><option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label><div className="form-grid"><label className="form-label">Recent workdays<input required type="number" min="1" value={recentDays} onChange={e=>setRecentDays(e.target.value)}/></label><label className="form-label">Amber required-rate ratio<input required type="number" min="0" step="0.01" value={amberRatio} onChange={e=>setAmberRatio(e.target.value)} placeholder="Company approved"/></label><label className="form-label">Red required-rate ratio<input required type="number" min="0" step="0.01" value={redRatio} onChange={e=>setRedRatio(e.target.value)} placeholder="Company approved"/></label><label className="form-label">Stale after hours<input required type="number" min="1" value={staleHours} onChange={e=>setStaleHours(e.target.value)}/></label></div><label className="mismatch-ack"><input type="checkbox" checked={approveRisk} onChange={e=>setApproveRisk(e.target.checked)}/><span>I am authorised to approve these company risk thresholds.</span></label><button className="button button-secondary" disabled={busy||!units.length}>Save risk policy</button></form></section>
-    </div><div className="workspace-warning"><Users size={17}/><div><b>User provisioning and buyer access</b><span>Create the auth user first, then add a matching profile. Map buyer users to buyer accounts in Supabase administration; no invitation or buyer-mapping UI is provided yet.</span></div></div></>}
+    </div><div className="workspace-warning"><Users size={17}/><div><b>User provisioning and buyer access</b><span>Create accounts, assign roles, reset passwords, and map buyer users from the User management page. Keep the initial administrator and project secrets secure.</span></div></div></>}
   </>
 }
+type ManagedUser = { id:string; email:string; display_name:string; role:Role; active:boolean; created_at:string; buyerId:string }
+type ManagedBuyer = { id:string; name:string; active:boolean }
+
+function UserManagementPage({live,notify}:{live:boolean;notify:(message:string)=>void}) {
+  const [users,setUsers]=useState<ManagedUser[]>([])
+  const [buyers,setBuyers]=useState<ManagedBuyer[]>([])
+  const [loading,setLoading]=useState(true)
+  const [saving,setSaving]=useState(false)
+  const [editingId,setEditingId]=useState('')
+  const [displayName,setDisplayName]=useState('')
+  const [email,setEmail]=useState('')
+  const [role,setRole]=useState<Role>('merchandiser')
+  const [buyerId,setBuyerId]=useState('')
+  const [password,setPassword]=useState('')
+  const [active,setActive]=useState(true)
+
+  async function reload(){
+    if(!live){setLoading(false);return}
+    setLoading(true)
+    try{const result=await invokeProtectedFunction<{users:ManagedUser[];buyers:ManagedBuyer[]}>('manage-users',{action:'list'});setUsers(result.users);setBuyers(result.buyers)}
+    catch(error){notify(error instanceof Error?error.message:'Could not load workspace users.')}
+    finally{setLoading(false)}
+  }
+  useEffect(()=>{void reload()},[live])
+
+  function clearForm(){setEditingId('');setDisplayName('');setEmail('');setRole('merchandiser');setBuyerId('');setPassword('');setActive(true)}
+  function editUser(user:ManagedUser){setEditingId(user.id);setDisplayName(user.display_name);setEmail(user.email);setRole(user.role);setBuyerId(user.buyerId);setPassword('');setActive(user.active);window.scrollTo({top:0,behavior:'smooth'})}
+  async function submit(event:FormEvent){
+    event.preventDefault()
+    if(role==='buyer'&&!buyerId){notify('Select the buyer account this user may access.');return}
+    if(!editingId&&password.length<8){notify('Set a temporary password with at least 8 characters.');return}
+    setSaving(true)
+    try{
+      const result=await invokeProtectedFunction<{message:string}>('manage-users',editingId?{action:'update',userId:editingId,displayName,role,buyerId,active,password}:{action:'create',displayName,email,role,buyerId,password})
+      notify(result.message);clearForm();await reload()
+    }catch(error){notify(error instanceof Error?error.message:'Could not save this user.')}
+    finally{setSaving(false)}
+  }
+
+  return <>
+    <div className="page-heading"><div><div className="eyebrow">ADMINISTRATION</div><h1>User management</h1><p>Create sign-in accounts, assign workspace roles, and control buyer access.</p></div><button className="button button-secondary" onClick={()=>void reload()} disabled={!live||loading}>Refresh</button></div>
+    {!live&&<div className="workspace-warning"><LockKeyhole size={17}/><div><b>Connect a workspace and sign in as an administrator.</b><span>Preview mode cannot create accounts or change access.</span></div></div>}
+    {live&&<div className="config-forms user-management-layout">
+      <section className="panel-card config-card"><div className="panel-heading"><div><h3>{editingId?'Edit workspace user':'Create a user'}</h3><span>{editingId?'Change this user’s role, buyer access, or active status.':'Create the login and ThreadLine profile together.'}</span></div></div>
+        <form onSubmit={event=>void submit(event)}>
+          <label className="form-label">Full name<input required maxLength={120} value={displayName} onChange={event=>setDisplayName(event.target.value)} placeholder="Name shown in ThreadLine"/></label>
+          <label className="form-label">Email address<input required type="email" value={email} onChange={event=>setEmail(event.target.value)} placeholder="person@company.com"/></label>
+          <label className="form-label">Workspace role<select value={role} onChange={event=>setRole(event.target.value as Role)}><option value="admin">Administrator</option><option value="merchandiser">Merchandiser</option><option value="supervisor">Factory supervisor</option><option value="buyer">Buyer</option></select></label>
+          {role==='buyer'&&<label className="form-label">Buyer account<select required value={buyerId} onChange={event=>setBuyerId(event.target.value)}><option value="">Select buyer</option>{buyers.filter(buyer=>buyer.active).map(buyer=><option key={buyer.id} value={buyer.id}>{buyer.name}</option>)}</select><small>Buyer users can see only orders shared with this account.</small></label>}
+          <label className="form-label">{editingId?'Reset password (optional)':'Temporary password'}<input required={!editingId} minLength={8} type="password" autoComplete="new-password" value={password} onChange={event=>setPassword(event.target.value)} placeholder={editingId?'Leave blank to keep current password':'At least 8 characters'}/></label>
+          {editingId&&<label className="mismatch-ack"><input type="checkbox" checked={active} onChange={event=>setActive(event.target.checked)}/><span>Account is active</span></label>}
+          <div className="user-form-note"><ShieldCheck size={15}/><span>Share temporary passwords securely. Administrators cannot see existing passwords.</span></div>
+          <div className="user-form-actions"><button className="button button-primary" disabled={saving}>{saving?'Saving…':editingId?'Save changes':'Create account'}</button>{editingId&&<button type="button" className="button button-secondary" onClick={clearForm} disabled={saving}>Cancel</button>}</div>
+        </form>
+      </section>
+      <section className="panel-card config-card"><div className="panel-heading"><div><h3>Workspace users</h3><span>{users.length} account{users.length===1?'':'s'} · buyer access is managed here.</span></div></div>
+        {loading?<p className="modal-intro">Loading users…</p>:<div className="managed-users-list">{users.map(user=><article className="managed-user" key={user.id}><div className="managed-user-main"><div className="managed-user-avatar">{user.display_name.slice(0,2).toUpperCase()}</div><div><b>{user.display_name}</b><span>{user.email||'No email on auth account'}</span><small>{roleLabels[user.role]}{user.role==='buyer'&&user.buyerId?` · ${buyers.find(buyer=>buyer.id===user.buyerId)?.name??'Buyer account'}`:''}</small></div></div><div className="managed-user-actions"><span className={`managed-user-state ${user.active?'is-active':''}`}>{user.active?'Active':'Inactive'}</span><button className="text-button" onClick={()=>editUser(user)}>Manage</button></div></article>)}{users.length===0&&<p className="buyer-empty-note">No workspace users were found.</p>}</div>}
+      </section>
+    </div>}
+  </>
+}
+
 function SetupSummary({title,count,detail}:{title:string;count:number;detail:string}){return <div className="setting-card"><div className="setting-icon"><Settings2 size={17}/></div><div className="setting-copy"><b>{title}</b><span>{detail}</span></div><span className="setting-count">{count}</span></div>}
 function TemplateList({rows,units,onToggle}:{rows:{id:string;unit_id:string|null;name:string;active:boolean;version:number}[];units:{id:string;name:string}[];onToggle:(id:string,active:boolean)=>void}){return <div className="config-record-list">{rows.map(row=><div key={row.id}><span><b>{row.name}</b><small>{units.find(u=>u.id===row.unit_id)?.name??'All units'} · v{row.version} · {row.active?'Active':'Inactive'}</small></span><button className="text-button" onClick={()=>onToggle(row.id,!row.active)}>{row.active?'Deactivate':'Activate'}</button></div>)}{!rows.length&&<p className="buyer-empty-note">No templates configured yet.</p>}</div>}
 

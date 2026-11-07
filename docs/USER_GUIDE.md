@@ -23,4 +23,4 @@ Sign in with your buyer account. The portal is read-only and shows only orders r
 
 ## Administrator
 
-Use Workspace setup to add confirmed buyers, units and working days, production lines, stage/TNA templates, holidays and company-approved unit risk policies. Templates are activated only after the administrator checks the approval box; risk policies require an authorised approver. User provisioning and buyer-user mapping are still managed through trusted Supabase administration. Never activate an illustrative route or invent a company threshold.
+Use Workspace setup to add confirmed buyers, units and working days, production lines, stage/TNA templates, holidays and company-approved unit risk policies. Templates are activated only after the administrator checks the approval box; risk policies require an authorised approver. Use User management to create accounts, assign roles, change active status or email, reset a password, and map buyer users to one buyer account. Share temporary passwords securely. Ask a user to sign out and back in after changing their role. Never activate an illustrative route or invent a company threshold.

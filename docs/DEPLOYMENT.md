@@ -12,16 +12,16 @@
 
 1. Create a staging Supabase project and a separate production project.
 2. Review and apply the migration to staging. Never apply the synthetic seed to production.
-3. Create buyer, unit, calendar, stage template, TNA template, production line, risk policy and user records using approved customer information.
+3. After the initial administrator is provisioned, use ThreadLine to create buyer, unit, calendar, stage template, TNA template, production line, risk policy and user records from approved customer information.
 4. Verify buyer ownership, supervisor stage assignments, RLS, private bucket policies and signed URL expiry with separate test accounts.
-5. Configure Edge Function secrets in the Supabase project and deploy each function. Keep provider/service keys outside frontend hosting variables.
+5. Configure Edge Function secrets in the Supabase project and deploy `issue-assist`, `transcribe-issue`, `approved-buyer-media`, and `manage-users`. The `manage-users` function needs `SUPABASE_SERVICE_ROLE_KEY` and verifies the caller's active administrator profile before it uses the admin Auth API. Keep provider/service keys outside frontend hosting variables.
 6. Build with `npm run build`, deploy the `dist/` folder, and set the Vite `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` build variables.
 7. Test offline queueing, reconnect and retry on the target low-end Android devices. Verify updates are still present after a reload and verify server receipt times.
 8. Configure database backups, log monitoring, retention, access review, incident owner and restore procedure with the hosting/project owner. These controls are not configured by this repository.
 
 ## Secrets
 
-`.env.example` contains browser-safe variable names. Only `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` belong in the client build. The Supabase service-role key and NVIDIA/Gemini keys must be Edge Function secrets. Rotate any secret that has been exposed in a browser bundle, screenshot, chat or source repository.
+`.env.example` contains browser-safe variable names. Only `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` belong in the client build. The Supabase service-role key and NVIDIA/Gemini keys must be Edge Function secrets. Rotate any secret that has been exposed in a browser bundle, screenshot, chat or source repository. After the first administrator is provisioned, user accounts, roles, passwords and buyer-user mapping can be managed in ThreadLine's **User management** page. The first administrator, project keys, schema migrations and function deployments still require trusted project setup.
 
 ## Free-tier and cost note
 
