@@ -39,6 +39,7 @@ export interface Order {
   status: Risk
   freshness: 'Fresh' | 'Stale' | 'No update'
   state?: 'draft' | 'released' | 'complete' | 'cancelled'
+  buyerVisible?: boolean
   stageOptions?: OrderStage[]
   milestones?: OrderMilestone[]
   buyerSafeRemarks?: { text: string; date: string }[]
