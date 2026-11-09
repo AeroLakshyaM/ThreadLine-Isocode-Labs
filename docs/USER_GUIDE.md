@@ -3,7 +3,7 @@
 ## Merchandiser
 
 1. Sign in using an administrator-provisioned account.
-2. Use **Workspace setup** to maintain confirmed buyers, production units/calendars, production lines, approved stage routes, TNA templates, holidays, and approved risk policies. Released orders lock the configuration they use; create a new template version or a separate unit configuration for future changes.
+2. Use **Order setup** to maintain confirmed buyers, production units/calendars, production lines, approved stage routes, TNA templates, holidays, and approved risk policies. Released orders lock the configuration they use; create a new template version or a separate unit configuration for future changes.
 3. Review the order board. Filters are based on buyers, units and order search; insufficient data stays visible when calendars, approved risk settings or production history are missing.
 4. Create a draft with buyer, production unit, PO, style, colour, ex-factory date and size-wise quantities. Review any PO total mismatch.
 5. Open the draft and select an active production route and TNA template. Confirm each stage, stage target, line assignments, supervisor assignments, milestone dates and buyer visibility. Save as draft or release.

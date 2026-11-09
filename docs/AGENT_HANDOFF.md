@@ -37,7 +37,7 @@ Current architecture:
 
 ### Administrator
 
-**Workspace setup** (`Workspace setup`):
+**Order setup** (`Order setup`):
 
 1. Add buyer accounts using confirmed customer names.
 2. Add production units and set the correct working days/timezone.
@@ -160,11 +160,13 @@ Get confirmed company/factory information before treating any configuration as r
 
 ## Latest change: merchandiser workspace ownership
 
-The role split was revised after the original workflow write-up. Merchandisers own operational workspace setup and production operations: buyer accounts, units/calendars, lines, stage/TNA templates, holidays, authorized risk policies, order creation/planning/release, issue and photo review, and reports. Administrators own account provisioning, role/activity/email/password management, buyer-user mapping, and password-change requests, plus their own profile. They no longer have operational screens or operational write authority.
+The role split was revised after the original workflow write-up. Merchandisers own operational order setup and production operations: buyer accounts, units/calendars, lines, stage/TNA templates, holidays, authorized risk policies, order creation/planning/release, issue and photo review, and reports. Administrators own account provisioning, role/activity/email/password management, buyer-user mapping, and password-change requests, plus their own profile. They no longer have operational screens or operational write authority.
 
 This requires `supabase/migrations/202611090004_merchandiser_workspace_authority.sql` after the initial schema and migrations 001–003. The migration updates workspace/order RLS policies, order RPC role checks, and `save_order_plan` to return a stage-and-milestone-specific validation error; it also removes direct client mutations of profiles and buyer mappings in favor of the authenticated `manage-users` Edge Function. Redeploy `issue-assist` and `transcribe-issue` to enforce merchandiser-only access. None of these backend changes were applied/tested in Supabase as of this update.
 
 The plan modal now names the stage, the invalid milestone, and the selected TNA template when it detects a mismatch, and suggests selecting a milestone in the chosen plan or clearing the link. Verify both client and RPC errors on staging after migration 004 is applied. Confirm merchandisers can perform setup and order work while admins are denied those operations and can still use User management.
 
 After this update, local `npm test` passes 4 domain tests and `npm run build` passes. SQL migration execution, Edge Function redeployment, and staging role/plan checks remain outstanding.
+
+The merchandiser page label is now **Order setup**. Its searchable existing-settings directory sits immediately below the summary cards and before the create forms. It offers all/editable/locked filters, collapsible record groups, separate active/approved and released-plan lock badges, localized weekdays, readable TNA offsets, risk-policy detail, and new-version actions for locked templates. The new-version action scrolls to the matching template editor. These UI changes compile and local tests pass; browser/device visual QA has not been run.
 
