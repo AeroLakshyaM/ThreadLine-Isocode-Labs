@@ -838,6 +838,7 @@ function UpdateModal({ orders, previewOnly, onClose, onSave }: { orders: Order[]
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const selectedOrder = orders.find(order => order.id === orderId) ?? orders[0]
+  if (!selectedOrder) return <ModalFrame title="No assigned orders" eyebrow="DAILY PRODUCTION" onClose={onClose}><p className="modal-intro">There are no assigned production orders available for an update. Ask your merchandiser to assign you to an order stage.</p><div className="modal-actions"><button type="button" className="button button-secondary" onClick={onClose}>Close</button></div></ModalFrame>
   const stageOptions = selectedOrder.stageOptions?.length ? selectedOrder.stageOptions : [{ id: `${selectedOrder.id}-stage`, name: selectedOrder.stage, sequence: 1, targetQuantity: selectedOrder.quantity, lines: [{ id: `${selectedOrder.id}-line`, name: 'Line A' }, { id: `${selectedOrder.id}-line-b`, name: 'Line B' }] }]
   const selectedStage = stageOptions.find(stageOption => stageOption.id === stageId) ?? stageOptions[0]
   const lineOptions = selectedStage?.lines ?? []

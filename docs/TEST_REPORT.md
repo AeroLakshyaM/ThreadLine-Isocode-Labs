@@ -18,6 +18,7 @@ Local TypeScript compilation, Vite production bundling, and three focused domain
 
 ## Issues identified and changes made
 
+- **Empty supervisor order list:** runtime error evidence pointed to `UpdateModal` reading `stageOptions` when an order list was empty. The modal now renders an explanatory empty state before accessing order fields. The production build passes after this guard; this exact browser path has not been reproduced in an end-to-end test.
 - **Managed-user editing:** the frontend now sends the email field required by `manage-users` when updating a user. Static review confirmed the Edge Function checks the active administrator, role, buyer mapping, email, password length, last active administrator, and self-deactivation protections. Create/edit/password reset/deactivation were not exercised against Auth.
 - **TNA timezone drift:** TNA dates now use UTC calendar arithmetic on `YYYY-MM-DD` values rather than local midnight converted through ISO UTC. The new tests cover month/year boundaries and invalid inputs.
 - **Buyer progress ambiguity:** buyer progress is labelled as the most advanced stage’s reported quantity versus that stage’s target. The buyer RPC now returns the stage name and target; the old unconditional “In production” assignment was removed. Direct buyer API isolation remains untested.
