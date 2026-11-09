@@ -124,24 +124,42 @@ export async function setQueuedState(clientId:string,state:PendingUpdate['syncSt
   await saveQueued({...record,update:{...record.update,syncState:state,syncError:state==='sync failed'?syncError:undefined}})
 }
 
+async function uploadEvidence(path:string, file:Blob, contentType:string):Promise<void>{
+  if(!supabase)throw new Error('Supabase is not configured; this update remains on this device.')
+  const {error}=await supabase.storage.from('production-evidence').upload(path,file,{upsert:false,contentType})
+  if(!error)return
+  // A previous attempt may have stored the uniquely named object before the
+  // database insert failed. Reusing that object makes queue retries idempotent.
+  if(/already exists|duplicate/i.test(error.message))return
+  throw new Error(error.message)
+}
+
 export async function syncQueued(record: QueuedRecord): Promise<void> {
   if (!supabase) throw new Error('Supabase is not configured; this update remains on this device.')
   const { data: authData, error: authError } = await supabase.auth.getUser()
   if (authError || !authData.user) throw new Error('Sign in is required to sync this production update. The update remains saved on this device.')
+  let existingQuery=supabase.from('production_updates').select('client_id,quantity,zero_reason,is_blocked,issue_text,photo_path').eq('order_id',record.update.orderId).eq('stage_id',record.update.stageId).eq('reporting_date',record.update.reportingDate)
+  existingQuery=record.update.lineId?existingQuery.eq('line_id',record.update.lineId):existingQuery.is('line_id',null)
+  const {data:existing,error:existingError}=await existingQuery.maybeSingle()
+  if(existingError)throw new Error(`Could not check for an existing daily update: ${existingError.message}`)
+  if(existing&&existing.client_id!==record.update.clientId){
+    const sameReport=existing.quantity===record.update.quantity&&(existing.zero_reason??'')===(record.update.zeroReason??'')&&existing.is_blocked===record.update.blocked&&(existing.issue_text??'')===(record.update.issue??'')
+    if(sameReport&&existing.photo_path){await removeQueued(record.update.clientId);return}
+    if(sameReport&&record.photo&&!existing.photo_path)throw new Error('This daily update is already saved, but it has no photo attached. Ask the merchandiser to review the existing update before retrying this photo.')
+    throw new Error('A daily update already exists for this stage and line. Ask the merchandiser to amend it before syncing another entry.')
+  }
   let photoPath: string | null = null
   let audioPath: string | null = null
   if (record.photo) {
     const photoExtension = record.photo.type === 'image/png' ? 'png' : record.photo.type === 'image/webp' ? 'webp' : 'jpg'
     photoPath = `${record.update.orderId}/${record.update.clientId}.${photoExtension}`
-    const { error } = await supabase.storage.from('production-evidence').upload(photoPath, record.photo, { upsert: true, contentType: record.photo.type || 'image/jpeg' })
-    if (error) throw new Error(`Photo upload failed: ${error.message}`)
+    try{await uploadEvidence(photoPath,record.photo,record.photo.type||'image/jpeg')}catch(error){throw new Error(`Photo upload failed: ${error instanceof Error?error.message:'Unknown storage error'}`)}
   }
   if (record.audio) {
     const audioType = record.audio.type.split(';')[0] || 'audio/webm'
     const audioExtension = audioType === 'audio/ogg' ? 'ogg' : audioType === 'audio/mp4' ? 'mp4' : audioType === 'audio/mpeg' ? 'mp3' : 'webm'
     audioPath = `${record.update.orderId}/${record.update.clientId}.${audioExtension}`
-    const { error } = await supabase.storage.from('production-evidence').upload(audioPath, record.audio, { upsert: true, contentType: audioType })
-    if (error) throw new Error(`Audio upload failed: ${error.message}`)
+    try{await uploadEvidence(audioPath,record.audio,audioType)}catch(error){throw new Error(`Audio upload failed: ${error instanceof Error?error.message:'Unknown storage error'}`)}
   }
   const { error } = await supabase.from('production_updates').upsert({
     client_id: record.update.clientId,
