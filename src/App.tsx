@@ -9,7 +9,7 @@ import {
 } from 'lucide-react'
 import { calculateRisk, moneyless, previewOrders } from './data'
 import { addDaysToDateOnly, buildWeeklyReportSnapshot, findUnmatchedStageMilestone, forecastOrderProgress, orderProgressPercent, type WeeklyUpdateInput } from './domain'
-import { getUpdateDraft, listQueued, prepareProductionPhoto, removeUpdateDraft, saveQueued, saveUpdateDraft, setQueuedState, syncQueued } from './offline'
+import { clearOfflineWorkspace, getUpdateDraft, listQueued, prepareProductionPhoto, removeUpdateDraft, saveQueued, saveUpdateDraft, setQueuedState, syncQueued } from './offline'
 import { isSupabaseConfigured, supabase } from './supabase'
 import type { Order, OrderMilestone, OrderStage, PendingUpdate, Role } from './types'
 import { loadOrders, loadProfile } from './liveData'
@@ -156,7 +156,14 @@ function App() {
     if (error) setAuthError('Sign-in failed. Check your details or contact your workspace administrator.')
     setAuthBusy(false)
   }
-  function startDemo(){setOrders(previewOrders);setDemoPhotos([]);setRole('merchandiser');setPage('board');setSelectedOrder(null);setModal(null);setAuthMode('preview')}
+  async function startDemo(){
+    try {
+      await clearOfflineWorkspace()
+      setOrders(previewOrders);setDemoPhotos([]);setRole('merchandiser');setPage('board');setSelectedOrder(null);setModal(null);setAuthMode('preview')
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : 'Could not reset the local preview workspace.')
+    }
+  }
   async function returnToWorkspace(){
     if(!sessionUser){setAuthMode('signedOut');return}
     setAuthMode('loadingWorkspace');setWorkspaceError('')

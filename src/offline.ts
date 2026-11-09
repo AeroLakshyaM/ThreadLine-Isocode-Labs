@@ -119,6 +119,18 @@ export async function removeQueued(clientId: string): Promise<void> {
   })
 }
 
+export async function clearOfflineWorkspace(): Promise<void> {
+  const db = await openDb()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction([STORE, DRAFT_STORE], 'readwrite')
+    tx.objectStore(STORE).clear()
+    tx.objectStore(DRAFT_STORE).clear()
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+    tx.onabort = () => reject(tx.error ?? new Error('The local workspace data could not be cleared.'))
+  })
+}
+
 export async function setQueuedState(clientId:string,state:PendingUpdate['syncState'],syncError?:string):Promise<void>{
   const records=await listQueued();const record=records.find(item=>item.update.clientId===clientId);if(!record)return
   await saveQueued({...record,update:{...record.update,syncState:state,syncError:state==='sync failed'?syncError:undefined}})

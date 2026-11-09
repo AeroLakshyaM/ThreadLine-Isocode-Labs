@@ -28,6 +28,11 @@ Never use preview data as factory data. The demo seed creates synthetic names an
 7. Deploy `issue-assist`, `transcribe-issue`, `order-advisor`, `approved-buyer-media`, and `manage-users`. Provider keys are server-side only. Functions fail clearly if keys are absent; AI is not simulated.
 8. Add company buyer/unit/line records, user assignments, approved stage and TNA templates, calendars, holidays, risk policy and retention policy before releasing live orders.
 
+For a clean handoff, run `supabase/reset_workspace_data.sql` in the Supabase
+SQL editor. It permanently removes all operational workspace data and
+production evidence while preserving profiles and Supabase Auth users. Back up
+anything needed before running it.
+
 NVIDIA lists a free endpoint for [Nemotron 3 Ultra](https://build.nvidia.com/nvidia/nemotron-3-ultra-550b-a55b). [Gemini 3 Flash Preview](https://ai.google.dev/gemini-api/docs/models/gemini-3-flash-preview) accepts audio input; Google states Gemini free-tier content may be used to improve its products. Review [Gemini pricing and data-use terms](https://ai.google.dev/gemini-api/docs/pricing) before enabling AI. Quotas, model availability and terms can change, so zero ongoing cost is not guaranteed. Do not send factory data or audio to a provider until the factory/customer has approved that data handling and the Tamil workflow has been piloted.
 
 ## Important operational rules
