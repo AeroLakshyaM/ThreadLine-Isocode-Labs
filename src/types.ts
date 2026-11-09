@@ -9,9 +9,10 @@ export interface OrderStage {
   lines: { id: string; name: string }[]
 }
 export interface OrderMilestone {
+  id?: string
   name: string
   date: string
-  status: string
+  status: 'upcoming' | 'in_progress' | 'complete' | 'at_risk' | 'overdue'
   buyerVisible: boolean
 }
 
@@ -30,6 +31,7 @@ export interface Order {
   completed: number
   stage: string
   shipDate: string
+  releaseDate?: string
   updatedAt: string
   issue?: string
   latestUpdateId?: string
@@ -40,6 +42,7 @@ export interface Order {
   freshness: 'Fresh' | 'Stale' | 'No update'
   state?: 'draft' | 'released' | 'complete' | 'cancelled'
   buyerVisible?: boolean
+  progressTarget?: number
   stageOptions?: OrderStage[]
   milestones?: OrderMilestone[]
   buyerSafeRemarks?: { text: string; date: string }[]

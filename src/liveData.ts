@@ -3,12 +3,12 @@ import { supabase } from './supabase'
 import type { Order, OrderMilestone, OrderStage, Role } from './types'
 
 type OrderRow = {
-  id: string; buyer_id: string; unit_id: string; po_number: string; style: string; colour: string; total_quantity: number; ex_factory_date: string; buyer_visible: boolean; state: 'draft'|'released'|'complete'|'cancelled'
+  id: string; buyer_id: string; unit_id: string; po_number: string; style: string; colour: string; total_quantity: number; ex_factory_date: string; released_at:string|null; buyer_visible: boolean; state: 'draft'|'released'|'complete'|'cancelled'
   buyers: { name: string } | { name: string }[] | null
   production_units?: { id: string; name: string; timezone: string; working_days: number[] } | { id: string; name: string; timezone: string; working_days: number[] }[] | null
   order_stages?: { id: string; stage_name: string; sequence_no: number; applicable: boolean; target_quantity: number | null; tna_milestone_name:string|null; stage_line_assignments: { line_id: string; production_lines: { id: string; name: string } | { id: string; name: string }[] | null }[] }[]
   production_updates?: { id: string; stage_id: string; quantity: number; reporting_date: string; received_at: string; issue_text: string | null; audio_path: string | null; is_blocked:boolean }[]
-  order_milestones?: { name: string; target_date: string; status: string; buyer_visible: boolean; sequence_no: number }[]
+  order_milestones?: { id:string; name: string; target_date: string; status: string; buyer_visible: boolean; sequence_no: number }[]
 }
 type RiskConfigRow = { unit_id: string; recent_workdays: number; amber_required_rate_ratio: number; red_required_rate_ratio: number; stale_after_hours: number; provisional: boolean; approved_at: string | null }
 
@@ -32,8 +32,8 @@ export async function loadOrders(role: Role): Promise<Order[]> {
   if (!supabase) throw new Error('Supabase is not configured.')
   const states = role === 'merchandiser' || role === 'admin' ? ['draft','released','complete'] : role === 'buyer' ? ['released','complete'] : ['released']
   const select = role === 'buyer'
-    ? 'id,buyer_id,unit_id,po_number,style,colour,total_quantity,ex_factory_date,buyer_visible,state,buyers(name),order_milestones(name,target_date,status,buyer_visible,sequence_no)'
-    : 'id,buyer_id,unit_id,po_number,style,colour,total_quantity,ex_factory_date,buyer_visible,state,buyers(name),production_units(id,name,timezone,working_days),order_stages(id,stage_name,sequence_no,applicable,target_quantity,tna_milestone_name,stage_line_assignments(line_id,production_lines(id,name))),order_milestones(name,target_date,status,buyer_visible,sequence_no),production_updates(id,stage_id,quantity,reporting_date,received_at,issue_text,audio_path,is_blocked)'
+    ? 'id,buyer_id,unit_id,po_number,style,colour,total_quantity,ex_factory_date,released_at,buyer_visible,state,buyers(name),order_milestones(id,name,target_date,status,buyer_visible,sequence_no)'
+    : 'id,buyer_id,unit_id,po_number,style,colour,total_quantity,ex_factory_date,released_at,buyer_visible,state,buyers(name),production_units(id,name,timezone,working_days),order_stages(id,stage_name,sequence_no,applicable,target_quantity,tna_milestone_name,stage_line_assignments(line_id,production_lines(id,name))),order_milestones(id,name,target_date,status,buyer_visible,sequence_no),production_updates(id,stage_id,quantity,reporting_date,received_at,issue_text,audio_path,is_blocked)'
   const { data, error } = await supabase.from('purchase_orders').select(select).in('state', states).order('ex_factory_date')
   if (error) throw new Error(`Could not load orders: ${error.message}`)
   const rows = (data ?? []) as unknown as OrderRow[]
@@ -55,7 +55,7 @@ export async function loadOrders(role: Role): Promise<Order[]> {
     const unit = one(row.production_units ?? null)
     const buyer = one(row.buyers)
     const stages = (row.order_stages ?? []).filter(stage => stage.applicable).sort((a,b) => a.sequence_no - b.sequence_no)
-    const milestones: OrderMilestone[] = (row.order_milestones ?? []).filter(milestone => role !== 'buyer' || milestone.buyer_visible).sort((a,b)=>a.sequence_no-b.sequence_no).map(milestone => ({ name: milestone.name, date: milestone.target_date, status: milestone.status, buyerVisible: milestone.buyer_visible }))
+    const milestones: OrderMilestone[] = (row.order_milestones ?? []).filter(milestone => role !== 'buyer' || milestone.buyer_visible).sort((a,b)=>a.sequence_no-b.sequence_no).map(milestone => ({ id:milestone.id, name: milestone.name, date: milestone.target_date, status: milestone.status as OrderMilestone['status'], buyerVisible: milestone.buyer_visible }))
     const stageOptions: OrderStage[] = stages.map(stage => ({ id: stage.id, name: stage.stage_name, sequence: stage.sequence_no, targetQuantity: stage.target_quantity, targetDate: milestones.find(milestone=>milestone.name===stage.tna_milestone_name)?.date, lines: (stage.stage_line_assignments ?? []).map(assignment => one(assignment.production_lines)).filter((line): line is {id:string;name:string} => Boolean(line)) }))
     const updates = row.production_updates ?? []
     let completed = 0
@@ -66,13 +66,17 @@ export async function loadOrders(role: Role): Promise<Order[]> {
     let updatedAt = '—'
     let freshness: Order['freshness'] = 'No update'
     let buyerSafeRemarks: {text:string;date:string}[] = []
+    let progressTarget: number | undefined
     const latestUpdate = [...updates].sort((a,b) => b.received_at.localeCompare(a.received_at))[0]
     const latestIssueUpdate = [...updates].filter(update => update.issue_text || update.audio_path).sort((a,b)=>b.received_at.localeCompare(a.received_at))[0]
 
     if (role === 'buyer') {
-      const { data: buyerViewRaw } = await supabase.rpc('get_buyer_order_progress', { target_order: row.id }).maybeSingle()
-      const buyerView = buyerViewRaw as unknown as {reported_quantity:number;last_update:string|null;buyer_remarks:{text:string;date:string}[]}|null
+      const { data: buyerViewRaw, error: buyerViewError } = await supabase.rpc('get_buyer_order_progress', { target_order: row.id }).maybeSingle()
+      if(buyerViewError)throw new Error(`Could not load buyer-safe order progress: ${buyerViewError.message}`)
+      const buyerView = buyerViewRaw as unknown as {reported_quantity:number;current_stage_name:string|null;current_stage_target:number|null;last_update:string|null;buyer_remarks:{text:string;date:string}[]}|null
       completed = buyerView?.reported_quantity ?? 0
+      stageName = buyerView?.current_stage_name ?? 'Production planning'
+      progressTarget = buyerView?.current_stage_target ?? row.total_quantity
       updatedAt = buyerView?.last_update ? new Date(buyerView.last_update).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'
       freshness = buyerView?.last_update ? freshnessFor(buyerView.last_update,24) : 'No update'
       stageName = 'In production'
@@ -80,6 +84,7 @@ export async function loadOrders(role: Role): Promise<Order[]> {
     } else if (latestUpdate) {
       const latestStage = stages.find(stage => stage.id === latestUpdate.stage_id)
       stageName = latestStage?.stage_name ?? stageName
+      progressTarget = latestStage?.target_quantity ?? row.total_quantity
       completed = updates.filter(update => update.stage_id === latestUpdate.stage_id).reduce((sum, update) => sum + update.quantity, 0)
       updatedAt = new Date(latestUpdate.received_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
       const unitConfig = unit ? approvedConfig.get(unit.id) : undefined
@@ -102,13 +107,13 @@ export async function loadOrders(role: Role): Promise<Order[]> {
         const severity = {green:0,insufficient:0,amber:1,red:2}
         candidates.sort((a,b)=>severity[b.risk]-severity[a.risk]||a.stage.sequence_no-b.stage.sequence_no)
         const driver = candidates[0]
-        if (driver) { status=driver.risk; stageName=driver.stage.stage_name; completed=driver.cumulative; recentDailyOutput=Math.round(driver.rate); workdaysLeft=driver.daysLeft }
+        if (driver) { status=driver.risk; stageName=driver.stage.stage_name; completed=driver.cumulative; progressTarget=driver.stage.target_quantity??row.total_quantity; recentDailyOutput=Math.round(driver.rate); workdaysLeft=driver.daysLeft }
       }
     }
 
     output.push({
       id: row.id, buyerId: row.buyer_id, unitId: row.unit_id, po: row.po_number, buyer: buyer?.name ?? 'Buyer', unit: unit?.name ?? 'Production unit', style: row.style, colour: row.colour,
-      quantity: row.total_quantity, completed: Math.min(completed, row.total_quantity), stage: stageName, shipDate: row.ex_factory_date, updatedAt,
+      quantity: row.total_quantity, completed: Math.min(completed, progressTarget??row.total_quantity), progressTarget, stage: stageName, shipDate: row.ex_factory_date, releaseDate:row.released_at??undefined, updatedAt,
       recentDailyOutput, workdaysLeft, status, freshness, stageOptions, state: row.state, milestones,
       issue: role === 'buyer' ? undefined : latestIssueUpdate?.issue_text ?? undefined, latestUpdateId: role === 'buyer' ? undefined : latestIssueUpdate?.id, latestAudioPath: role === 'buyer' ? undefined : latestIssueUpdate?.audio_path ?? undefined,
       buyerSafeRemarks, riskPolicyApproved: role !== 'buyer' && Boolean(unit && approvedConfig.get(unit.id)),
