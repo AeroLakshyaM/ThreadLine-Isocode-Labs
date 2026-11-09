@@ -64,4 +64,5 @@ export interface PendingUpdate {
   issue: string
   createdAt: string
   syncState: 'saved locally' | 'waiting to sync' | 'syncing' | 'synced' | 'sync failed'
+  syncError?: string
 }

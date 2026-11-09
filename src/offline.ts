@@ -20,6 +20,32 @@ export type UpdateDraftRecord = {
   updatedAt: string
 }
 
+export async function prepareProductionPhoto(file: File): Promise<File> {
+  const maxBytes = 4.5 * 1024 * 1024
+  const acceptedTypes = ['image/jpeg', 'image/png', 'image/webp']
+  if (file.size <= maxBytes && acceptedTypes.includes(file.type)) return file
+  if (!('createImageBitmap' in window)) throw new Error('This browser cannot prepare this image. Choose a JPG, PNG or WebP photo under 4.5 MB.')
+  let bitmap: ImageBitmap
+  try { bitmap = await createImageBitmap(file) } catch { throw new Error('This image format is not supported. Choose a JPG, PNG or WebP photo.') }
+  try {
+    const scale = Math.min(1, 1920 / Math.max(bitmap.width, bitmap.height))
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Could not prepare the photo. Please choose it again.')
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+    for (const quality of [0.84, 0.74, 0.64, 0.54]) {
+      const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/jpeg', quality))
+      if (blob && blob.size <= maxBytes) {
+        const name = `${file.name.replace(/\.[^.]+$/, '') || 'production-photo'}.jpg`
+        return new File([blob], name, { type: 'image/jpeg', lastModified: Date.now() })
+      }
+    }
+    throw new Error('The photo is still too large after compression. Choose a smaller image.')
+  } finally { bitmap.close() }
+}
+
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, 2)
@@ -93,9 +119,9 @@ export async function removeQueued(clientId: string): Promise<void> {
   })
 }
 
-export async function setQueuedState(clientId:string,state:PendingUpdate['syncState']):Promise<void>{
+export async function setQueuedState(clientId:string,state:PendingUpdate['syncState'],syncError?:string):Promise<void>{
   const records=await listQueued();const record=records.find(item=>item.update.clientId===clientId);if(!record)return
-  await saveQueued({...record,update:{...record.update,syncState:state}})
+  await saveQueued({...record,update:{...record.update,syncState:state,syncError:state==='sync failed'?syncError:undefined}})
 }
 
 export async function syncQueued(record: QueuedRecord): Promise<void> {
@@ -105,13 +131,16 @@ export async function syncQueued(record: QueuedRecord): Promise<void> {
   let photoPath: string | null = null
   let audioPath: string | null = null
   if (record.photo) {
-    photoPath = `${record.update.orderId}/${record.update.clientId}.jpg`
+    const photoExtension = record.photo.type === 'image/png' ? 'png' : record.photo.type === 'image/webp' ? 'webp' : 'jpg'
+    photoPath = `${record.update.orderId}/${record.update.clientId}.${photoExtension}`
     const { error } = await supabase.storage.from('production-evidence').upload(photoPath, record.photo, { upsert: true, contentType: record.photo.type || 'image/jpeg' })
     if (error) throw new Error(`Photo upload failed: ${error.message}`)
   }
   if (record.audio) {
-    audioPath = `${record.update.orderId}/${record.update.clientId}.webm`
-    const { error } = await supabase.storage.from('production-evidence').upload(audioPath, record.audio, { upsert: true, contentType: record.audio.type || 'audio/webm' })
+    const audioType = record.audio.type.split(';')[0] || 'audio/webm'
+    const audioExtension = audioType === 'audio/ogg' ? 'ogg' : audioType === 'audio/mp4' ? 'mp4' : audioType === 'audio/mpeg' ? 'mp3' : 'webm'
+    audioPath = `${record.update.orderId}/${record.update.clientId}.${audioExtension}`
+    const { error } = await supabase.storage.from('production-evidence').upload(audioPath, record.audio, { upsert: true, contentType: audioType })
     if (error) throw new Error(`Audio upload failed: ${error.message}`)
   }
   const { error } = await supabase.from('production_updates').upsert({
