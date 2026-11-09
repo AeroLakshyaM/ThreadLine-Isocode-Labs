@@ -16,7 +16,7 @@ Deno.serve(async request => {
   const { data: authData, error: authError } = await userClient.auth.getUser()
   if (authError || !authData.user) return reply(401, { error: 'Your session has expired. Sign in again.' })
   const { data: profile } = await userClient.from('profiles').select('role,active').eq('id', authData.user.id).maybeSingle()
-  if (!profile?.active || !['admin','merchandiser'].includes(profile.role)) return reply(403, { error: 'Only an authorised reviewer can request a transcript.' })
+  if (!profile?.active || profile.role !== 'merchandiser') return reply(403, { error: 'Only an active merchandiser can request a transcript.' })
   let body: { updateId?: string }
   try { body = await request.json() } catch { return reply(400, { error: 'Invalid request.' }) }
   if (!body.updateId) return reply(400, { error: 'Select a production update.' })

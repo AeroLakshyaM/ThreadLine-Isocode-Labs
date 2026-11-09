@@ -36,6 +36,17 @@ export function orderProgressPercent(completed: number, target: number): number 
   return Math.min(100, Math.max(0, Math.round(completed / target * 100)))
 }
 
+export function findUnmatchedStageMilestone(
+  stages: { stage_name: string; tna_milestone_name: string }[],
+  milestoneNames: string[],
+) {
+  const available = new Set(milestoneNames.map(name => name.trim().toLowerCase()))
+  return stages.find(stage => {
+    const linkedName = stage.tna_milestone_name.trim()
+    return linkedName.length > 0 && !available.has(linkedName.toLowerCase())
+  }) ?? null
+}
+
 export function buildWeeklyReportSnapshot(
   orders: WeeklyOrderInput[],
   updates: WeeklyUpdateInput[],

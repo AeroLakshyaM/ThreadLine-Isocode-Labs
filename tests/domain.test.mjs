@@ -17,6 +17,15 @@ test('date-only offsets reject malformed dates and fractional offsets', () => {
   assert.throws(() => source.addDaysToDateOnly('2026-03-01', 1.5))
 })
 
+test('stage milestone validation identifies the stage linked outside the chosen TNA', () => {
+  const result = source.findUnmatchedStageMilestone([
+    { stage_name: 'Cutting', tna_milestone_name: 'Fabric in-house' },
+    { stage_name: 'Packing', tna_milestone_name: 'Ship-ready' },
+  ], ['fabric IN-HOUSE', 'Final inspection'])
+  assert.deepEqual(result, { stage_name: 'Packing', tna_milestone_name: 'Ship-ready' })
+  assert.equal(source.findUnmatchedStageMilestone([{ stage_name: 'Sewing', tna_milestone_name: '  ' }], []), null)
+})
+
 test('weekly reports filter by selected week, group by stage and keep buyer-safe fields', () => {
   const orders = [{ id: 'o1', po: 'PO-1', style: 'Style', colour: 'Blue', quantity: 100, completed: 30, progressTarget: 60, currentStage: 'Stitching', shipDate: '2026-12-01', status: 'green', stageOptions: [{ id: 'cut', name: 'Cutting', sequence: 1 }, { id: 'sew', name: 'Stitching', sequence: 2 }], milestones: [{ name: 'Packing', date: '2026-11-20', status: 'upcoming', buyerVisible: true }, { name: 'Internal', date: '2026-11-21', status: 'upcoming', buyerVisible: false }] }]
   const updates = [

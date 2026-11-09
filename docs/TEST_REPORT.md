@@ -4,6 +4,8 @@
 **Repository:** `D:\Threadline - Isocode Labs\ThreadLine-Isocode-Labs`
 **Scope:** Targeted stabilisation of the existing React/Vite/Supabase implementation. No redesign or production deployment was performed.
 
+> **Current P1 validation addendum (2026-11-09):** The requested P1 tests were not run against staging because no confirmed staging connection is available in this workspace. There are no Supabase environment variables or Supabase CLI configured. `.env.example` contains a hosted project URL, but its environment is unverified; it was not contacted or written to. See “P1 Core Product Validation” at the end of this report for per-test records. Local tests/build pass but do not substitute for staging validation.
+
 ## Executive status
 
 Local TypeScript compilation, Vite production bundling, and three focused domain tests pass. The changes address the known frontend defects and add a migration for schema changes. The connected Supabase environment could not be safely identified as an isolated test project: no local test credentials, Supabase CLI, or disposable project configuration were available. No database migration, seed data, authentication request, Edge Function call, or production write was run. Consequently, the application is **not yet demonstrably verified end to end**, and live/database-dependent requirements remain partial or not tested.
@@ -135,6 +137,63 @@ All rows below are **NOT TESTED at runtime** unless marked otherwise. Static sou
 6. Record actual responses and downloadable output evidence in a follow-up report. Fix any failures before production review.
 7. Run `npm test` and `npm run build`; deploy only after staging acceptance and explicit production approval. No deployment or production data change was done in this task.
 
+## P1 Core Product Validation — 2026-11-09
+
+### Execution summary and blocker
+
+The user specified that staging is available and authorized use of synthetic test data. However, this workspace has no `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `SUPABASE_URL`, `SUPABASE_ACCESS_TOKEN`, or `SUPABASE_SERVICE_ROLE_KEY` in its process environment; no `.env.local`/test environment file is present; and the Supabase CLI is unavailable. The only project URL/key found is in `.env.example`; the existing project documentation explicitly says its environment is not verified. It was therefore not used. No staging request, login, migration, seed, data write, Edge Function request, or browser workflow was executed.
+
+**Result:** All staging acceptance items below are **NOT TESTED**, not PASS. This is an access/configuration blocker, not evidence that the feature failed. No feature fix was applied because no runtime failure or staging response was observed. To unblock, configure a confirmed disposable staging project URL and public anon key for this workspace, provide/use test account access for the four roles, and confirm staging has the migrations required by the current application. Keep service-role credentials server-side; they are not needed for ordinary browser tests. If test fixtures are not already available, authorize/prepare synthetic records in that staging project.
+
+### Per-test records
+
+For every record, **Actual result** means the observed execution result. Since these staging tests could not start, it is explicitly “not run,” rather than an inferred product outcome. Expected results restate the requested acceptance criteria.
+
+| Test ID | Test steps | Expected result | Actual result | Status | Evidence / defect / fix |
+|---|---|---|---|---|---|
+| P1.1.a | Sign in as merchandiser; create an order using a staging buyer/unit; enter PO, style, colour, ex-factory date and size quantities; save as draft. | Valid draft is persisted with correct fields and size rows. | Not run; no staging URL/session available. | NOT TESTED | Evidence: environment availability check found no staging variables or Supabase CLI. Defect: none established. Fix: none. |
+| P1.1.b | Enter size quantities whose sum differs from the entered PO total; submit. | Total is calculated from sizes; mismatch is surfaced clearly and requires the intended acknowledgement/handling. | Not run. | NOT TESTED | No staging form/RPC response. Defect/fix unknown. |
+| P1.1.c | Create an order, then submit another order with the same buyer and PO. | Duplicate is rejected with a clear message; first order remains intact. | Not run. | NOT TESTED | Database uniqueness/RPC not exercised. Defect/fix unknown. |
+| P1.2.a | Select an active TNA template for a draft order; generate milestones; compare each result with its configured date offset from ex-factory. | Dates match approved offsets and save with the plan. | Not run. | NOT TESTED | UTC date math has local unit coverage only; staging generation/save not exercised. Defect/fix unknown. |
+| P1.2.b | Use date values near a month/year boundary and inspect in Asia/Kolkata; edit milestone dates before release and save. | No one-day timezone shift; accepted edits persist. | Not run. | NOT TESTED | No Asia/Kolkata browser/database round trip. Defect/fix unknown. |
+| P1.2.c | Change milestone status through allowed states; set buyer visibility; inspect buyer view as the mapped buyer. | Status and visibility persist; buyer sees only milestones marked for buyer display. | Not run. | NOT TESTED | No live role sessions or RLS checks. Defect/fix unknown. |
+| P1.3.a | Create a draft plan from an active stage-route template; set applicable stages. | Correct stages and sequence persist. | Not run. | NOT TESTED | Known production-plan save failure remains unresolved/unverified. No actual RPC error was captured. Defect/fix unknown. |
+| P1.3.b | Assign two production lines and eligible supervisors to stages; save the plan. | Assignment configuration persists and validates against unit/stage. | Not run. | NOT TESTED | No plan save or database response. Defect/fix unknown. |
+| P1.3.c | Release the planned order; sign in as assigned supervisor. | Released configuration remains fixed; assigned supervisor sees the assigned work only. | Not run. | NOT TESTED | Release locks, supervisor authorization and assignment query not executed. Defect/fix unknown. |
+| P1.4.a | As assigned supervisor, submit daily quantity for a stage and line; verify saved row. | Period quantity, reporting date and timestamps are stored once and visible in history/aggregates. | Not run. | NOT TESTED | No supervisor session or staging write. Defect/fix unknown. |
+| P1.4.b | Attach a photograph to an update; inspect administrator review and buyer state before/after approval. | Upload succeeds; photo is private until explicitly approved; approved access follows policy. | Not run. | NOT TESTED | Storage and signed media not exercised. Defect/fix unknown. |
+| P1.4.c | Submit a text issue and a browser-recorded voice note. | Text/audio attach to the correct update; original audio is retained; no automatic transcription is implied. | Not run. | NOT TESTED | No browser/device/audio upload test. Defect/fix unknown. |
+| P1.4.d | Submit zero output without and then with a reason; mark stage blocked without and then with explanation. | Invalid zero/blocked submissions are rejected clearly; valid ones persist with reason. | Not run. | NOT TESTED | Form and server validation not exercised. Defect/fix unknown. |
+| P1.4.e | Inspect report date, client event time and server receipt time after submission and after offline retry. | Reporting date and timestamps are consistent and history is retained. | Not run. | NOT TESTED | No live row or offline sync. Defect/fix unknown. |
+| P1.5.a | Configure two lines under the same stage; submit 100 on Line A and 150 on Line B for the same reporting period. | Stage total is 250; line records remain distinct; stage quantity is not counted again as a third submission. | Not run. | NOT TESTED | Aggregation SQL/RLS and UI not exercised. Defect/fix unknown. |
+| P1.5.b | Resubmit using same client UUID after simulated retry; submit a distinct later-period update; use supported amendment flow if available. | Retry is idempotent; a new period is counted once; amendments preserve audit history and do not silently duplicate output. | Not run. | NOT TESTED | No sync retry or amendment workflow test. Existing docs state full amendment/history UI is incomplete. Defect: amendment path may be unavailable; no fix applied. |
+| P1.5.c | Compare order-level progress with documented rule: output at the most advanced reported stage versus that stage target. | Progress reflects the documented stage/target rule and is not a sum of output across stages. | Not run. | NOT TESTED | Domain/UI behavior not exercised with live data. Defect/fix unknown. |
+| P1.6.a | Seed only staging synthetic order: remaining 2,000, recent average 400/day, 4 working days left; inspect required pace. | Required pace is 500 pieces per working day. | Not run. | NOT TESTED | No staging order/calendar/update data. Defect/fix unknown. |
+| P1.6.b | Configure only company-approved staging thresholds; inspect risk class and explanation for the sample. | Risk class follows the approved thresholds; explanation exposes pace/remaining days in understandable terms. | Not run. | NOT TESTED | No thresholds provided/configured. No thresholds were invented. Defect/fix unknown. |
+| P1.6.c | Remove approved policy/calendar or insufficient production history; separately age the latest update beyond stale limit. | Missing/insufficient data is not green; stale status is separately identified from pace risk. | Not run. | NOT TESTED | No staging policy/calendar/history. Defect/fix unknown. |
+| P1.7.a | Sign in as Buyer A; open released and shared order with approved milestones/photo and internal issue/unapproved photo. | Buyer A sees only own released/shared data, approved milestones/photos, and no internal issue/unapproved photo. | Not run. | NOT TESTED | No Buyer A credentials or staging records. Defect/fix unknown. |
+| P1.7.b | As Buyer A, directly request Buyer B order, milestone and media identifiers through API/RPC/storage paths. | Every unauthorized record/media request is denied, not merely hidden in UI. | Not run. | NOT TESTED | No JWT/API session; RLS isolation remains unverified. Defect/fix unknown. |
+| P1.8.a | Select Buyer A and a reporting week; generate and download PDF. | File downloads and contains only the selected buyer/week authorized fields. | Not run. | NOT TESTED | No signed-in report flow or file to inspect. Defect/fix unknown. |
+| P1.8.b | Generate and download Excel for same buyer/week. | File downloads, opens, and contains expected buyer-safe rows/fields. | Not run. | NOT TESTED | No signed-in report flow or file to inspect. ExcelJS chunk is 940 KB minified in local build. Defect/fix unknown. |
+| P1.8.c | Seed updates both inside and outside selected week; compare both exports, buyer identity and milestones; search exports for internal notes and Buyer B identifiers. | Only selected-week activity and Buyer A-authorized fields are present; no internal notes or other buyer data. | Not run. | NOT TESTED | Weekly-selection logic has unit tests, but no staging query/export/content inspection. Defect/fix unknown. |
+
+### Local verification run during this P1 attempt
+
+| Test | Result | Evidence / limitation |
+|---|---|---|
+| `npm test` | PASS | 3 domain tests passed: date-only offsets across calendar boundaries, invalid date/offset rejection, and selected-week report filtering/grouping. These do not test Supabase or end-to-end workflows. |
+| `npm run build` | PASS | TypeScript and Vite build succeeded. Vite reports the lazy ExcelJS chunk is about 940 KB minified and above the 500 KB warning threshold. |
+
+### Prioritised remaining P1 defects / blockers
+
+1. **P1 blocker — Staging access unavailable here.** No confirmed staging URL/key, role test sessions, or CLI are configured. Provide the staging URL and browser-safe anon key through the workspace's approved secret mechanism, plus test account access (or a way to create accounts in staging). Do not send the service-role key in chat or browser configuration.
+2. **P1 defect — Plan save failure unresolved.** Reproduce against staging and capture the actual `save_order_plan` RPC error before changing schema/client logic.
+3. **P1 validation gap — Database and authorization behaviors.** Duplicate PO, release locks, supervisor assignment scoping, line aggregation/idempotency, buyer isolation, photo approval, and RLS/RPC permissions require direct staging tests.
+4. **P1 validation gap — Exports.** Download and inspect real PDF/XLSX outputs for selected-week correctness and buyer-data exclusion. Consider ExcelJS mobile download impact after measuring; do not optimize unrelated behavior before acceptance evidence.
+5. **P1 validation gap — Device workflows.** Photo/audio capture, offline persistence/retry, timestamps and responsive layout require target mobile/browser testing.
+
+**P2 gate:** P1 has not passed and is not ready to move to P2. No P2 work was started. Resume P1 when confirmed staging access and synthetic role accounts are available; request approval to enter P2 only after the P1 tests have actual results and the remaining defects are explicitly reviewed.
+
 ## Follow-up: profile and password-change request feature
 
 After the original QA report, a role-independent **My profile** page was added. It shows the signed-in account name, email, role and buyer account (for buyer users). Users can submit one pending password-change request at a time, with an optional note. Requests create an in-app admin alert: a pending-count badge appears on User management and the request is listed there. The badge refreshes every 30 seconds while an admin is signed in.
@@ -150,3 +209,11 @@ Workspace setup now has a directory for existing buyer accounts, production unit
 Migration `202611090003_release_configuration_locks.sql` adds database triggers that enforce these locks even through direct table requests. It also blocks edits to released order fields, sizes, production stages, stage assignments, supervisors, and milestone plan details; milestone status-only changes remain allowed. This is code-reviewed but unexecuted SQL because no isolated Supabase project is configured. **The application build passed** after these changes; the three existing domain tests also pass, but edit, lock, and direct-API enforcement remain **NOT TESTED** against a database.
 
 Migration order: apply the initial schema, then `202611090001_stabilisation.sql` if it has not already been applied, then `202611090002_password_change_requests.sql` and `202611090003_release_configuration_locks.sql`. Do not rerun an already-applied migration; each is a one-time migration. The lock behavior freezes the shared unit calendar and risk policy after a released order uses that unit. To use changed shared settings for future production while preserving released order history, create a separate production unit configuration.
+
+## Role ownership and plan validation update — 2026-11-09
+
+Product-owner direction moved operational setup and order work to the merchandiser role. Merchandisers own buyers, units/calendars, lines, stage/TNA templates, holidays, approved risk policies, order planning/release, issue/photo review, and reports. Administrators own account provisioning, role/activity/email/password management, buyer-user mapping, password-change requests, and their own profile. The UI now places Workspace setup under merchandisers and sends administrators to User management; operational screens, dialogs, and milestone edits are guarded by role.
+
+The plan editor now checks stage-to-TNA milestone links before save and identifies the stage, linked milestone, selected TNA template, and correction. The new RPC implementation in migration `202611090004_merchandiser_workspace_authority.sql` returns the same specific error for stale/direct requests. That migration moves workspace/order RLS permissions and order RPC authority to merchandisers, and keeps profile and buyer-mapping mutations behind the authenticated `manage-users` Edge Function. `issue-assist` and `transcribe-issue` now reject administrator callers; redeploy these two functions with the source changes.
+
+**Local checks after the changes:** `npm test` passed (4 domain tests, including case-insensitive stage/milestone mismatch identification); `npm run build` passed (TypeScript/Vite). **Staging verification:** NOT TESTED. Migration 004 was not executed and Edge Functions were not deployed/called because a confirmed staging connection is not configured in this checkout. Validate merchandiser setup/order workflows, administrator denials, user management, and both client/RPC stage-milestone errors before relying on the permission change. This new role split is not yet staging-verified. The existing ExcelJS chunk warning remains (about 940 KB minified).
