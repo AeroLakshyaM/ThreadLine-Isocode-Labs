@@ -16,6 +16,18 @@ export interface OrderMilestone {
   buyerVisible: boolean
 }
 
+export interface StageForecast {
+  stageId: string
+  name: string
+  target: number | null
+  completed: number
+  recentDailyOutput: number
+  workdaysLeft: number
+  status: Risk
+  forecastByDeadline: number | null
+  shortfall: number | null
+}
+
 export interface Order {
   id: string
   po: string
@@ -45,6 +57,7 @@ export interface Order {
   progressTarget?: number
   stageOptions?: OrderStage[]
   milestones?: OrderMilestone[]
+  stageForecasts?: StageForecast[]
   buyerSafeRemarks?: { text: string; date: string }[]
   riskPolicyApproved?: boolean
 }

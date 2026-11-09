@@ -17,6 +17,28 @@ test('date-only offsets reject malformed dates and fractional offsets', () => {
   assert.throws(() => source.addDaysToDateOnly('2026-03-01', 1.5))
 })
 
+test('order forecast uses recent output and working days without exceeding the target', () => {
+  assert.deepEqual(source.forecastOrderProgress(200, 1000, 100, 10), {
+    remaining: 800,
+    requiredPerDay: 80,
+    workdaysToComplete: 8,
+    workdayBuffer: 2,
+    forecastByTarget: 1000,
+    shortfall: 0,
+  })
+})
+
+test('order forecast stays unavailable when there is no usable recent output', () => {
+  assert.deepEqual(source.forecastOrderProgress(200, 1000, 0, 10), {
+    remaining: 800,
+    requiredPerDay: 80,
+    workdaysToComplete: null,
+    workdayBuffer: null,
+    forecastByTarget: null,
+    shortfall: null,
+  })
+})
+
 test('stage milestone validation identifies the stage linked outside the chosen TNA', () => {
   const result = source.findUnmatchedStageMilestone([
     { stage_name: 'Cutting', tna_milestone_name: 'Fabric in-house' },

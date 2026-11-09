@@ -1,6 +1,6 @@
 import type { User } from '@supabase/supabase-js'
 import { supabase } from './supabase'
-import type { Order, OrderMilestone, OrderStage, Role } from './types'
+import type { Order, OrderMilestone, OrderStage, Role, StageForecast } from './types'
 
 type OrderRow = {
   id: string; buyer_id: string; unit_id: string; po_number: string; style: string; colour: string; total_quantity: number; ex_factory_date: string; released_at:string|null; buyer_visible: boolean; state: 'draft'|'released'|'complete'|'cancelled'
@@ -67,6 +67,7 @@ export async function loadOrders(role: Role): Promise<Order[]> {
     let freshness: Order['freshness'] = 'No update'
     let buyerSafeRemarks: {text:string;date:string}[] = []
     let progressTarget: number | undefined
+    let stageForecasts: StageForecast[] = []
     const latestUpdate = [...updates].sort((a,b) => b.received_at.localeCompare(a.received_at))[0]
     const latestIssueUpdate = [...updates].filter(update => update.issue_text || update.audio_path).sort((a,b)=>b.received_at.localeCompare(a.received_at))[0]
 
@@ -89,32 +90,38 @@ export async function loadOrders(role: Role): Promise<Order[]> {
       updatedAt = new Date(latestUpdate.received_at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })
       const unitConfig = unit ? approvedConfig.get(unit.id) : undefined
       freshness = unitConfig ? freshnessFor(latestUpdate.received_at, unitConfig.stale_after_hours) : freshnessFor(latestUpdate.received_at,24)
-      if (unitConfig && unit) {
-        const holidays = holidaysByUnit.get(unit.id) ?? new Set<string>()
-        const candidates = stages.map(stage => {
-          const stageUpdates = updates.filter(update => update.stage_id === stage.id)
-          const cumulative = stageUpdates.reduce((sum, update) => sum + update.quantity, 0)
-          const target = stage.target_quantity
-          const deadline = stageOptions.find(option=>option.id===stage.id)?.targetDate ?? row.ex_factory_date
-          const daysLeft = countWorkdays(todayKey, deadline, unit.working_days, holidays)
-          const startKey = subtractWorkdays(todayKey, unitConfig.recent_workdays, unit.working_days, holidays)
-          const periodOutput = stageUpdates.filter(update=>update.reporting_date>=startKey&&update.reporting_date<=todayKey).reduce((sum,update)=>sum+update.quantity,0)
-          const periodDays = countWorkdays(startKey, todayKey, unit.working_days, holidays)
-          const rate = periodDays ? periodOutput/periodDays : 0
-          const risk = target === null || !daysLeft || !rate ? 'insufficient' as const : classifyRisk(Math.max(0,target-cumulative)/daysLeft/rate,unitConfig)
-          return {stage,risk,cumulative,daysLeft,rate}
-        })
-        const severity = {green:0,insufficient:0,amber:1,red:2}
+    }
+
+    const unitConfig = unit ? approvedConfig.get(unit.id) : undefined
+    if(role!=='buyer'&&unit&&stages.length){
+      const holidays=holidaysByUnit.get(unit.id)??new Set<string>()
+      const candidates=stages.map(stage=>{
+        const stageUpdates=updates.filter(update=>update.stage_id===stage.id)
+        const cumulative=stageUpdates.reduce((sum,update)=>sum+update.quantity,0)
+        const target=stage.target_quantity
+        const deadline=stageOptions.find(option=>option.id===stage.id)?.targetDate??row.ex_factory_date
+        const daysLeft=countWorkdays(todayKey,deadline,unit.working_days,holidays)
+        const startKey=unitConfig?subtractWorkdays(todayKey,unitConfig.recent_workdays,unit.working_days,holidays):todayKey
+        const periodOutput=stageUpdates.filter(update=>update.reporting_date>=startKey&&update.reporting_date<=todayKey).reduce((sum,update)=>sum+update.quantity,0)
+        const periodDays=unitConfig?countWorkdays(startKey,todayKey,unit.working_days,holidays):0
+        const rate=periodDays?periodOutput/periodDays:0
+        const risk=unitConfig&&target!==null&&daysLeft&&rate?classifyRisk(Math.max(0,target-cumulative)/daysLeft/rate,unitConfig):'insufficient' as const
+        const forecastByDeadline=target===null||!daysLeft||!rate?null:Math.min(target,Math.round(cumulative+rate*daysLeft))
+        return{stage,risk,cumulative,daysLeft,rate,target,forecastByDeadline,shortfall:target===null||forecastByDeadline===null?null:Math.max(0,target-forecastByDeadline)}
+      })
+      stageForecasts=candidates.map(item=>({stageId:item.stage.id,name:item.stage.stage_name,target:item.target,completed:item.cumulative,recentDailyOutput:Math.round(item.rate),workdaysLeft:item.daysLeft,status:item.risk,forecastByDeadline:item.forecastByDeadline,shortfall:item.shortfall}))
+      if(unitConfig){
+        const severity={green:0,insufficient:0,amber:1,red:2}
         candidates.sort((a,b)=>severity[b.risk]-severity[a.risk]||a.stage.sequence_no-b.stage.sequence_no)
-        const driver = candidates[0]
-        if (driver) { status=driver.risk; stageName=driver.stage.stage_name; completed=driver.cumulative; progressTarget=driver.stage.target_quantity??row.total_quantity; recentDailyOutput=Math.round(driver.rate); workdaysLeft=driver.daysLeft }
+        const driver=candidates[0]
+        if(driver){status=driver.risk;stageName=driver.stage.stage_name;completed=driver.cumulative;progressTarget=driver.stage.target_quantity??row.total_quantity;recentDailyOutput=Math.round(driver.rate);workdaysLeft=driver.daysLeft}
       }
     }
 
     output.push({
       id: row.id, buyerId: row.buyer_id, unitId: row.unit_id, po: row.po_number, buyer: buyer?.name ?? 'Buyer', unit: unit?.name ?? 'Production unit', style: row.style, colour: row.colour,
       quantity: row.total_quantity, completed: Math.min(completed, progressTarget??row.total_quantity), progressTarget, stage: stageName, shipDate: row.ex_factory_date, releaseDate:row.released_at??undefined, updatedAt,
-      recentDailyOutput, workdaysLeft, status, freshness, stageOptions, state: row.state, milestones,
+      recentDailyOutput, workdaysLeft, status, freshness, stageOptions, stageForecasts, state: row.state, milestones,
       issue: role === 'buyer' ? undefined : latestIssueUpdate?.issue_text ?? undefined, latestUpdateId: role === 'buyer' ? undefined : latestIssueUpdate?.id, latestAudioPath: role === 'buyer' ? undefined : latestIssueUpdate?.audio_path ?? undefined,
       buyerSafeRemarks, riskPolicyApproved: role !== 'buyer' && Boolean(unit && approvedConfig.get(unit.id)),
       blocked: role!=='buyer'&&Boolean(latestUpdate?.is_blocked)

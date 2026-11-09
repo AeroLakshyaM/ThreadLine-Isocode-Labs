@@ -36,6 +36,24 @@ export function orderProgressPercent(completed: number, target: number): number 
   return Math.min(100, Math.max(0, Math.round(completed / target * 100)))
 }
 
+export function forecastOrderProgress(completed: number, target: number, recentDailyOutput: number, workdaysLeft: number) {
+  const safeTarget = Number.isFinite(target) ? Math.max(0, target) : 0
+  const safeCompleted = Number.isFinite(completed) ? Math.min(safeTarget, Math.max(0, completed)) : 0
+  const remaining = Math.max(0, safeTarget - safeCompleted)
+  const hasForecast = Number.isFinite(recentDailyOutput) && recentDailyOutput > 0 && Number.isFinite(workdaysLeft) && workdaysLeft > 0
+  const requiredPerDay = workdaysLeft > 0 ? Math.ceil(remaining / workdaysLeft) : 0
+  const workdaysToComplete = hasForecast && remaining > 0 ? Math.ceil(remaining / recentDailyOutput) : remaining === 0 ? 0 : null
+  const forecastByTarget = hasForecast ? Math.min(safeTarget, Math.round(safeCompleted + recentDailyOutput * workdaysLeft)) : null
+  return {
+    remaining,
+    requiredPerDay,
+    workdaysToComplete,
+    workdayBuffer: workdaysToComplete === null ? null : workdaysLeft - workdaysToComplete,
+    forecastByTarget,
+    shortfall: forecastByTarget === null ? null : Math.max(0, safeTarget - forecastByTarget),
+  }
+}
+
 export function findUnmatchedStageMilestone(
   stages: { stage_name: string; tna_milestone_name: string }[],
   milestoneNames: string[],
