@@ -4,6 +4,8 @@
 **Repository:** `D:\Threadline - Isocode Labs\ThreadLine-Isocode-Labs`  
 **Purpose:** Give the next engineering agent a reliable map of the product, role workflows, implementation state, known gaps, and safest next actions. This document describes the repository, not a verified production deployment.
 
+**Assessment context:** The owner says this Threadline app is the product case for a live-deal PM assessment. Preserve its submission rules and judging rubric from [`ASSESSMENT_BRIEF.md`](ASSESSMENT_BRIEF.md). The assessment requires a PRD, week-by-week timeline, and draft agreement in one ZIP; this context alone is not a request to create or submit those files.
+
 ## 1. Instructions for the next agent
 
 Continue the existing Threadline implementation. Do not rebuild it or replace its architecture without a clear technical reason. First inspect the current working tree, migrations, existing QA report, and environment configuration. Treat all hosted Supabase details as untrusted until the project owner confirms that the project is isolated staging with synthetic data.

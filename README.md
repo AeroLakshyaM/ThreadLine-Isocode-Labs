@@ -6,6 +6,8 @@ Threadline is a mobile-first production order tracking PWA for garment manufactu
 
 This is an implementation foundation with working screens and backend flows, not a production deployment. It has a synthetic preview mode, live Supabase login/data paths, draft PO creation, order planning and release, offline queueing, issue review, photo approval, buyer-scoped reads, basic workspace setup and PDF/XLSX snapshot exports. User provisioning/buyer mapping and company data must still be completed; several workflows need real-project integration and field testing before production use. See `docs/OPEN_DECISIONS.md` and `docs/KNOWN_LIMITATIONS.md`.
 
+The product owner's PM-deal assessment brief and judging rubric are preserved in `docs/ASSESSMENT_BRIEF.md`. Treat it as assessment context for future PRD/timeline/agreement work; it does not by itself authorize external submission.
+
 Never use preview data as factory data. The demo seed creates synthetic names and inactive example templates only; it sets no working calendar, risk thresholds, or Company A facts.
 
 ## Run locally
