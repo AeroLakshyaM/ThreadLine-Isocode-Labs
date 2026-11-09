@@ -134,3 +134,11 @@ All rows below are **NOT TESTED at runtime** unless marked otherwise. Static sou
 5. Create synthetic users for all four roles and execute the full role/RLS/photo/RPC/CORS tests, the six must-have workflows, offline/retry tests, and report downloads.
 6. Record actual responses and downloadable output evidence in a follow-up report. Fix any failures before production review.
 7. Run `npm test` and `npm run build`; deploy only after staging acceptance and explicit production approval. No deployment or production data change was done in this task.
+
+## Follow-up: profile and password-change request feature
+
+After the original QA report, a role-independent **My profile** page was added. It shows the signed-in account name, email, role and buyer account (for buyer users). Users can submit one pending password-change request at a time, with an optional note. Requests create an in-app admin alert: a pending-count badge appears on User management and the request is listed there. The badge refreshes every 30 seconds while an admin is signed in.
+
+An administrator can open a request, which selects that user in the existing User management form. The admin enters a new temporary password; the existing authenticated Edge Function performs the Auth password reset. After that succeeds, the app marks the request completed and records reviewer/time. The administrator must share the temporary password securely with the user. No email or push notification service is configured; the alert is inside Threadline.
+
+This feature requires `supabase/migrations/202611090002_password_change_requests.sql`. It is separate from the earlier stabilisation migration: if `202611090001_stabilisation.sql` was already applied, apply only migration `202611090002_password_change_requests.sql` for this feature. Neither migration was applied or tested against Supabase in this workspace. The current frontend build passed with the profile changes, and the existing 3 domain tests passed; the new authenticated request/reset flow itself remains **NOT TESTED** without a disposable Supabase test project.

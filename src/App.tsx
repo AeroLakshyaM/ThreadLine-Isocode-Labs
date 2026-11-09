@@ -5,7 +5,7 @@ import {
   ChevronDown, ChevronRight, ChevronUp, ClipboardList, Clock3, Download, Factory,
   FileSpreadsheet, Filter, ImagePlus, LayoutDashboard, ListFilter, LockKeyhole,
   Menu, MoreHorizontal, PackageCheck, Plus, Radio, Search, Settings2,
-  ShieldCheck, ShoppingBag, SlidersHorizontal, TriangleAlert, Users, Wifi, WifiOff, X
+  ShieldCheck, ShoppingBag, SlidersHorizontal, TriangleAlert, UserCircle, Users, Wifi, WifiOff, X
 } from 'lucide-react'
 import { calculateRisk, moneyless, previewOrders } from './data'
 import { addDaysToDateOnly, buildWeeklyReportSnapshot, orderProgressPercent, type WeeklyUpdateInput } from './domain'
@@ -16,7 +16,7 @@ import { loadOrders, loadProfile } from './liveData'
 import type { User } from '@supabase/supabase-js'
 import { invokeProtectedFunction } from './supabase'
 
-type Page = 'board' | 'orders' | 'issues' | 'photos' | 'reports' | 'production' | 'sync' | 'buyer' | 'workspace' | 'users'
+type Page = 'board' | 'orders' | 'issues' | 'photos' | 'reports' | 'production' | 'sync' | 'buyer' | 'workspace' | 'users' | 'profile'
 const roleLabels: Record<Role, string> = { merchandiser: 'Merchandiser', supervisor: 'Factory supervisor', buyer: 'Buyer', admin: 'Administrator' }
 
 function App() {
@@ -42,6 +42,7 @@ function App() {
   const [modal, setModal] = useState<'order' | 'update' | 'plan' | null>(null)
   const [toast, setToast] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
+  const [pendingPasswordRequests,setPendingPasswordRequests]=useState(0)
 
   useEffect(() => {
     if (!supabase) { setAuthMode('preview'); return }
@@ -79,6 +80,15 @@ function App() {
     })()
     return () => { active = false }
   }, [sessionUser])
+
+  useEffect(()=>{
+    if(!supabase||authMode!=='signedIn'||role!=='admin'){setPendingPasswordRequests(0);return}
+    let active=true
+    const refresh=async()=>{const {count,error}=await supabase!.from('password_change_requests').select('id',{count:'exact',head:true}).eq('status','pending');if(active&&!error)setPendingPasswordRequests(count??0)}
+    void refresh()
+    const timer=window.setInterval(()=>void refresh(),30000)
+    return()=>{active=false;window.clearInterval(timer)}
+  },[authMode,role])
 
   useEffect(() => {
     const onOnline = () => setOnline(true)
@@ -182,12 +192,13 @@ function App() {
         {role === 'buyer' && <NavItem icon={<ShoppingBag size={18} />} label="My orders" active={page === 'buyer'} onClick={() => navigate('buyer')} />}
         {role === 'admin' && <>
           <NavItem icon={<Settings2 size={18} />} label="Workspace setup" active={page === 'workspace'} onClick={() => navigate('workspace')} />
-          <NavItem icon={<Users size={18} />} label="User management" active={page === 'users'} onClick={() => navigate('users')} />
+          <NavItem icon={<Users size={18} />} label="User management" active={page === 'users'} badge={pendingPasswordRequests||undefined} onClick={() => navigate('users')} />
         </>}
       </nav>
+      <NavItem icon={<UserCircle size={18}/>} label="My profile" active={page==='profile'} onClick={()=>navigate('profile')}/>
       <div className="sidebar-spacer" />
       {role !== 'buyer' && <div className="sidebar-health"><div className="health-icon"><ShieldCheck size={16} /></div><div><b>{authMode==='preview'?'Preview mode':'Workspace'}</b><span>{authMode==='preview'?'Sample records only':online?'Connected':'Offline · local queue'}</span></div><span className="health-dot" /></div>}
-      <div className="profile-row"><div className="profile-avatar">{(profileName||buyerAccount||roleLabels[role]).slice(0,2).toUpperCase()}</div><div className="profile-meta"><b>{authMode==='preview'?`Preview ${roleLabels[role]}`:profileName||buyerAccount}</b><span>{roleLabels[role]}</span></div><button className="icon-button" aria-label="Account menu" onClick={() => notify(authMode==='preview'?'Sign in to manage your account.':'Account settings are managed by your workspace administrator.')}><MoreHorizontal size={18} /></button></div>
+      <div className="profile-row"><div className="profile-avatar">{(profileName||buyerAccount||roleLabels[role]).slice(0,2).toUpperCase()}</div><div className="profile-meta"><b>{authMode==='preview'?`Preview ${roleLabels[role]}`:profileName||buyerAccount}</b><span>{roleLabels[role]}</span></div><button className="icon-button" aria-label="Open profile" onClick={() => navigate('profile')}><MoreHorizontal size={18} /></button></div>
     </aside>
     <button className={`sidebar-backdrop ${menuOpen ? 'is-visible' : ''}`} type="button" aria-label="Close navigation menu" tabIndex={menuOpen ? 0 : -1} onClick={() => setMenuOpen(false)} />
 
@@ -213,7 +224,8 @@ function App() {
         {page === 'reports' && <ReportsPage orders={filteredOrders} notify={notify} />}
       {page === 'buyer' && <BuyerPage buyerName={authMode==='preview'?'Northstar Kids':buyerAccount} orders={filteredOrders} setSelected={setSelectedOrder} />}
         {page === 'workspace' && <WorkspacePage live={authMode==='signedIn'} demoMode={authMode==='preview'} notify={notify} />}
-        {page === 'users' && role === 'admin' && <UserManagementPage live={authMode==='signedIn'} demoMode={authMode==='preview'} notify={notify} />}
+        {page === 'users' && role === 'admin' && <UserManagementPage live={authMode==='signedIn'} demoMode={authMode==='preview'} notify={notify} onPendingChange={setPendingPasswordRequests} />}
+        {page === 'profile' && <ProfilePage user={sessionUser} displayName={profileName} role={role} buyerAccount={buyerAccount} live={authMode==='signedIn'} demoMode={authMode==='preview'} notify={notify} />}
       </div>
     </main>
 
@@ -279,6 +291,7 @@ function pageTitle(page: Page, role: Role) {
   if (page === 'reports') return 'Buyer reports'
   if (page === 'buyer') return 'My orders'
   if (page === 'users') return 'User management'
+  if (page === 'profile') return 'My profile'
   return 'Workspace setup'
 }
 
@@ -661,10 +674,12 @@ function WorkspacePage({live,demoMode,notify}:{live:boolean;demoMode:boolean;not
 }
 type ManagedUser = { id:string; email:string; display_name:string; role:Role; active:boolean; created_at:string; buyerId:string }
 type ManagedBuyer = { id:string; name:string; active:boolean }
+type PasswordRequest = {id:string;user_id:string;request_note:string|null;status:'pending'|'completed'|'declined';admin_note:string|null;requested_at:string;reviewed_at:string|null}
 
-function UserManagementPage({live,demoMode,notify}:{live:boolean;demoMode:boolean;notify:(message:string)=>void}) {
+function UserManagementPage({live,demoMode,notify,onPendingChange}:{live:boolean;demoMode:boolean;notify:(message:string)=>void;onPendingChange:(count:number)=>void}) {
   const [users,setUsers]=useState<ManagedUser[]>([])
   const [buyers,setBuyers]=useState<ManagedBuyer[]>([])
+  const [passwordRequests,setPasswordRequests]=useState<PasswordRequest[]>([])
   const [loading,setLoading]=useState(true)
   const [saving,setSaving]=useState(false)
   const [editingId,setEditingId]=useState('')
@@ -674,18 +689,20 @@ function UserManagementPage({live,demoMode,notify}:{live:boolean;demoMode:boolea
   const [buyerId,setBuyerId]=useState('')
   const [password,setPassword]=useState('')
   const [active,setActive]=useState(true)
+  const [handlingRequestId,setHandlingRequestId]=useState('')
 
   async function reload(){
     if(!live){setLoading(false);return}
     setLoading(true)
-    try{const result=await invokeProtectedFunction<{users:ManagedUser[];buyers:ManagedBuyer[]}>('manage-users',{action:'list'});setUsers(result.users);setBuyers(result.buyers)}
+    try{const [result,requestResult]=await Promise.all([invokeProtectedFunction<{users:ManagedUser[];buyers:ManagedBuyer[]}>('manage-users',{action:'list'}),supabase!.from('password_change_requests').select('id,user_id,request_note,status,admin_note,requested_at,reviewed_at').order('requested_at',{ascending:false})]);if(requestResult.error)throw requestResult.error;setUsers(result.users);setBuyers(result.buyers);setPasswordRequests((requestResult.data??[]) as PasswordRequest[]);onPendingChange((requestResult.data??[]).filter(request=>request.status==='pending').length)}
     catch(error){notify(error instanceof Error?error.message:'Could not load workspace users.')}
     finally{setLoading(false)}
   }
   useEffect(()=>{void reload()},[live])
 
-  function clearForm(){setEditingId('');setDisplayName('');setEmail('');setRole('merchandiser');setBuyerId('');setPassword('');setActive(true)}
-  function editUser(user:ManagedUser){setEditingId(user.id);setDisplayName(user.display_name);setEmail(user.email);setRole(user.role);setBuyerId(user.buyerId);setPassword('');setActive(user.active);window.scrollTo({top:0,behavior:'smooth'})}
+  function clearForm(){setEditingId('');setDisplayName('');setEmail('');setRole('merchandiser');setBuyerId('');setPassword('');setActive(true);setHandlingRequestId('')}
+  function editUser(user:ManagedUser){setEditingId(user.id);setDisplayName(user.display_name);setEmail(user.email);setRole(user.role);setBuyerId(user.buyerId);setPassword('');setActive(user.active);setHandlingRequestId('');window.scrollTo({top:0,behavior:'smooth'})}
+  function resetForRequest(request:PasswordRequest){const user=users.find(item=>item.id===request.user_id);if(!user){notify('The account for this request could not be found. Refresh the user list.');return}editUser(user);setHandlingRequestId(request.id);setPassword('');window.scrollTo({top:0,behavior:'smooth'})}
   async function submit(event:FormEvent){
     event.preventDefault()
     if(role==='buyer'&&!buyerId){notify('Select the buyer account this user may access.');return}
@@ -693,7 +710,7 @@ function UserManagementPage({live,demoMode,notify}:{live:boolean;demoMode:boolea
     setSaving(true)
     try{
       const result=await invokeProtectedFunction<{message:string}>('manage-users',editingId?{action:'update',userId:editingId,displayName,email:email.trim(),role,buyerId,active,password}:{action:'create',displayName,email:email.trim(),role,buyerId,password})
-      notify(result.message);clearForm();await reload()
+      notify(result.message);const completedRequestId=handlingRequestId;clearForm();if(completedRequestId&&supabase){const {data:userData}=await supabase.auth.getUser();const {error:requestError}=await supabase.from('password_change_requests').update({status:'completed',reviewed_by:userData.user?.id??null,reviewed_at:new Date().toISOString(),admin_note:'Temporary password reset by an administrator. Share it securely with the user.'}).eq('id',completedRequestId).eq('status','pending');if(requestError)notify('Password reset succeeded, but the request could not be marked complete. Refresh and review it.')}await reload()
     }catch(error){notify(error instanceof Error?error.message:'Could not save this user.')}
     finally{setSaving(false)}
   }
@@ -702,7 +719,9 @@ function UserManagementPage({live,demoMode,notify}:{live:boolean;demoMode:boolea
     <div className="page-heading"><div><div className="eyebrow">ADMINISTRATION</div><h1>User management</h1><p>Create sign-in accounts, assign workspace roles, and control buyer access.</p></div><button className="button button-secondary" onClick={()=>void reload()} disabled={!live||loading}>Refresh</button></div>
     {!live&&<div className="workspace-warning"><LockKeyhole size={17}/><div><b>{demoMode?'Sample team access':'Connect a workspace and sign in as an administrator.'}</b><span>{demoMode?'These are example roles for exploring the workflow; use the role selector in the header to switch views.':'Preview mode cannot create accounts or change access.'}</span></div></div>}
     {demoMode&&<section className="panel-card config-card demo-admin-snapshot"><div className="panel-heading"><div><h3>Example workspace users</h3><span>In the live workspace, administrators create and manage these accounts here.</span></div></div><div className="managed-users-list">{[['Mira Merchandiser','Merchandiser'],['Asha Supervisor','Factory supervisor'],['Northstar Buyer','Buyer · Northstar Kids'],['Workspace Admin','Administrator']].map(([name,roleName])=><article className="managed-user" key={name}><div className="managed-user-main"><div className="managed-user-avatar">{name.slice(0,2).toUpperCase()}</div><div><b>{name}</b><span>Sample account · no sign-in credentials</span><small>{roleName}</small></div></div><span className="managed-user-state is-active">Demo</span></article>)}</div></section>}
-    {live&&<div className="config-forms user-management-layout">
+    {live&&<>
+      <section className="panel-card config-card password-request-panel"><div className="panel-heading"><div><h3>Password change requests</h3><span>Users can’t change their own password here. Reset it below, then share a temporary password securely.</span></div><span className="setting-count">{passwordRequests.filter(request=>request.status==='pending').length} pending</span></div>{loading?<p className="modal-intro">Loading requests…</p>:<div className="managed-users-list">{passwordRequests.map(request=>{const user=users.find(item=>item.id===request.user_id);return <article className="managed-user password-request-row" key={request.id}><div className="managed-user-main"><div className="managed-user-avatar">{(user?.display_name??'U').slice(0,2).toUpperCase()}</div><div><b>{user?.display_name??'Workspace user'}</b><span>{user?.email??'Account email unavailable'}</span><small>{request.request_note||'No additional details'} · {new Date(request.requested_at).toLocaleString()}</small></div></div><div className="managed-user-actions"><span className={`managed-user-state ${request.status==='pending'?'':'is-active'}`}>{request.status==='pending'?'Pending':request.status==='completed'?'Password reset':'Declined'}</span>{request.status==='pending'&&<button className="button button-primary" onClick={()=>resetForRequest(request)}>Reset password</button>}</div></article>})}{!passwordRequests.length&&<p className="buyer-empty-note">No password change requests.</p>}</div>}</section>
+      <div className="config-forms user-management-layout">
       <section className="panel-card config-card"><div className="panel-heading"><div><h3>{editingId?'Edit workspace user':'Create a user'}</h3><span>{editingId?'Change this user’s role, buyer access, or active status.':'Create the login and ThreadLine profile together.'}</span></div></div>
         <form onSubmit={event=>void submit(event)}>
           <label className="form-label">Full name<input id="managed-user-name" name="displayName" required maxLength={120} value={displayName} onChange={event=>setDisplayName(event.target.value)} placeholder="Name shown in ThreadLine"/></label>
@@ -718,7 +737,28 @@ function UserManagementPage({live,demoMode,notify}:{live:boolean;demoMode:boolea
       <section className="panel-card config-card"><div className="panel-heading"><div><h3>Workspace users</h3><span>{users.length} account{users.length===1?'':'s'} · buyer access is managed here.</span></div></div>
         {loading?<p className="modal-intro">Loading users…</p>:<div className="managed-users-list">{users.map(user=><article className="managed-user" key={user.id}><div className="managed-user-main"><div className="managed-user-avatar">{user.display_name.slice(0,2).toUpperCase()}</div><div><b>{user.display_name}</b><span>{user.email||'No email on auth account'}</span><small>{roleLabels[user.role]}{user.role==='buyer'&&user.buyerId?` · ${buyers.find(buyer=>buyer.id===user.buyerId)?.name??'Buyer account'}`:''}</small></div></div><div className="managed-user-actions"><span className={`managed-user-state ${user.active?'is-active':''}`}>{user.active?'Active':'Inactive'}</span><button className="text-button" onClick={()=>editUser(user)}>Manage</button></div></article>)}{users.length===0&&<p className="buyer-empty-note">No workspace users were found.</p>}</div>}
       </section>
-    </div>}
+      </div>
+    </>}
+  </>
+}
+
+function ProfilePage({user,displayName,role,buyerAccount,live,demoMode,notify}:{user:User|null;displayName:string;role:Role;buyerAccount:string;live:boolean;demoMode:boolean;notify:(message:string)=>void}){
+  const [requests,setRequests]=useState<PasswordRequest[]>([])
+  const [note,setNote]=useState('')
+  const [loading,setLoading]=useState(live)
+  const [saving,setSaving]=useState(false)
+  const [error,setError]=useState('')
+  const pending=requests.some(request=>request.status==='pending')
+  async function reload(){if(!supabase||!user||!live){setLoading(false);return}setLoading(true);setError('');const {data,error:loadError}=await supabase.from('password_change_requests').select('id,user_id,request_note,status,admin_note,requested_at,reviewed_at').eq('user_id',user.id).order('requested_at',{ascending:false});if(loadError){setError(`Could not load password request status: ${loadError.message}`);setRequests([])}else setRequests((data??[]) as PasswordRequest[]);setLoading(false)}
+  useEffect(()=>{void reload()},[live,user?.id])
+  async function submit(event:FormEvent){event.preventDefault();if(!supabase||!user){setError('Sign in to send a request to your workspace administrator.');return}setSaving(true);setError('');const {error:requestError}=await supabase.from('password_change_requests').insert({user_id:user.id,request_note:note.trim()||null});if(requestError){setError(requestError.code==='23505'?'You already have a pending password request.':'Could not send the request: '+requestError.message)}else{setNote('');notify('Password change request sent to your workspace administrator. They will set a temporary password and contact you securely.');await reload()}setSaving(false)}
+  return <><div className="page-heading"><div><div className="eyebrow">ACCOUNT</div><h1>My profile</h1><p>View your workspace account details and request help with your password.</p></div>{live&&<button className="button button-secondary" onClick={()=>void reload()} disabled={loading}>Refresh</button>}</div>
+    {demoMode&&<div className="workspace-warning"><UserCircle size={17}/><div><b>Preview profile</b><span>This is sample information. Sign in to see your real account and contact an administrator.</span></div></div>}
+    <section className="panel-card config-card profile-detail-card"><div className="profile-detail-avatar">{(displayName||roleLabels[role]).slice(0,2).toUpperCase()}</div><div className="profile-detail-content"><div className="eyebrow">WORKSPACE ACCOUNT</div><h2>{displayName||`Preview ${roleLabels[role]}`}</h2><div className="profile-detail-grid"><div><span>Email</span><b>{user?.email??(demoMode?'Demo account':'Unavailable')}</b></div><div><span>Role</span><b>{roleLabels[role]}</b></div>{role==='buyer'&&<div><span>Buyer account</span><b>{buyerAccount||'Not linked'}</b></div>}<div><span>Account status</span><b>{live?'Active':'Preview'}</b></div></div></div></section>
+    <section className="panel-card config-card profile-password-card"><div className="panel-heading"><div><h3>Password assistance</h3><span>For security, an administrator will set a temporary password and give it to you directly.</span></div><LockKeyhole size={18}/></div>
+      {!live&&<p className="buyer-empty-note">Sign in to send a password change request.</p>}
+      {live&&<>{loading?<p className="modal-intro">Loading request status…</p>:error&&requests.length===0&&<div className="form-error"><TriangleAlert size={15}/>{error}</div>}{pending&&<div className="workspace-warning"><Clock3 size={17}/><div><b>Request sent · awaiting administrator</b><span>{requests.find(request=>request.status==='pending')?.requested_at?new Date(requests.find(request=>request.status==='pending')!.requested_at).toLocaleString():''}</span></div></div>}{!pending&&<form onSubmit={event=>void submit(event)}><label className="form-label">Optional note<textarea id="password-request-note" name="requestNote" maxLength={1000} rows={3} value={note} onChange={event=>setNote(event.target.value)} placeholder="Add a short note for your administrator"/></label>{error&&<div className="form-error"><TriangleAlert size={15}/>{error}</div>}<div className="user-form-note"><ShieldCheck size={15}/><span>This sends an in-app alert to workspace administrators. Your current password is never shared or displayed.</span></div><div className="user-form-actions"><button className="button button-primary" disabled={saving||loading}>{saving?'Sending request…':'Request password change'}</button></div></form>}{requests.filter(request=>request.status!=='pending').slice(0,3).map(request=><div className="profile-request-history" key={request.id}><b>{request.status==='completed'?'Password reset by administrator':'Request declined'}</b><span>{request.reviewed_at?new Date(request.reviewed_at).toLocaleString():new Date(request.requested_at).toLocaleString()}</span></div>)}</>}
+    </section>
   </>
 }
 
